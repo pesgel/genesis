@@ -2,5 +2,5 @@
 resolver = "2"
 members = [
     "genesis-common",
-    "genesis-process",
+    "genesis-process", "genesis-ssh",  "genesis-web",
 ]
