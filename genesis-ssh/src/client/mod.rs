@@ -14,6 +14,7 @@ use channel_direct_tcpip::DirectTCPIPChannel;
 use channel_session::SessionChannel;
 pub use error::SshClientError;
 use futures::pin_mut;
+use genesis_common::EventHub;
 use genesis_common::{SSHTargetAuth, SessionId, TargetSSHOptions};
 use handler::ClientHandler;
 use russh::client::Handle;
@@ -591,6 +592,81 @@ impl Drop for RemoteClient {
         info!("Closed connection");
         debug!("Dropped");
     }
+}
+
+pub async fn start_ssh_connect(
+    uuid: Uuid,
+    option: TargetSSHOptions,
+) -> anyhow::Result<(EventHub<Bytes>, UnboundedSender<Bytes>)> {
+    // step1. start connect
+    let mut handle = RemoteClient::create(uuid)?;
+    let (tx, rx) = oneshot::channel();
+    handle
+        .command_tx
+        .send((RCCommand::Connect(option), Some(tx)))?;
+    let _ = rx.await?;
+    // step2. start open channel
+    let channel_id = Uuid::new_v4();
+    let message = (
+        RCCommand::Channel(channel_id, ChannelOperation::OpenShell),
+        None,
+    );
+    info!(channel_id=%channel_id,"open channel");
+    handle.command_tx.send(message)?;
+    // step3. request pty
+    let message = (
+        RCCommand::Channel(
+            channel_id,
+            ChannelOperation::RequestPty(crate::PtyRequest {
+                term: "xterm".into(),
+                col_width: 100,
+                row_height: 10,
+                pix_width: 0,
+                pix_height: 0,
+                modes: vec![],
+            }),
+        ),
+        None,
+    );
+    info!(channel_id=%channel_id,"request pty");
+    handle.command_tx.send(message)?;
+    // step4. start shell
+    let message = (
+        RCCommand::Channel(channel_id, ChannelOperation::RequestShell),
+        None,
+    );
+    info!(channel_id=%channel_id,"request shell");
+    handle.command_tx.send(message)?;
+
+    // step5 create event hub
+    let (hub, sender) = EventHub::setup();
+    // step6. start ssh channel
+    tokio::spawn(async move {
+        while let Some(e) = handle.event_rx.recv().await {
+            match e {
+                crate::RCEvent::Output(_, bytes) => {
+                    let _ = sender.send_once(bytes).await;
+                }
+                _ => {
+                    info!("receive envent : {:?}", e);
+                }
+            }
+        }
+    });
+    let (tx, mut rx) = unbounded_channel();
+
+    tokio::spawn(async move {
+        while let Some(e) = rx.recv().await {
+            handle
+                .command_tx
+                .send((
+                    RCCommand::Channel(channel_id, ChannelOperation::Data(e)),
+                    None,
+                ))
+                .unwrap();
+        }
+    });
+    anyhow::Ok((hub, tx))
 }
 
 #[cfg(test)]
