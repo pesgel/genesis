@@ -7,8 +7,8 @@ license = "Apache-2.0"
 [dependencies]
 anyhow = "1.0.91"
 bytes = "1.8.0"
-russh = "0.45.0"
-tokio = {version="1.41.0", features = ["tracing", "signal"]}
+russh = "0.46.0"
+tokio = {version="1.41.0", features = ["tracing", "signal","io-std"]}
 tracing = "0.1.40"
 uuid = "1.11.0"
 

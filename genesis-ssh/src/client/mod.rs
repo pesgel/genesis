@@ -674,7 +674,7 @@ mod tests {
     use super::RemoteClient;
     use super::*;
     use genesis_common::SshTargetPasswordAuth;
-    use std::io::Write;
+    use tokio::io::AsyncWriteExt;
     use uuid::Uuid;
     #[tokio::test]
     async fn test_remote_client() {
@@ -751,12 +751,13 @@ mod tests {
                 handle.command_tx.send(message).unwrap();
 
                 let handle = tokio::spawn(async move {
-                    let mut out = std::io::stdout();
+                    // io_std feature
+                    let mut out = tokio::io::stdout();
                     while let Some(e) = handle.event_rx.recv().await {
                         match e {
                             crate::RCEvent::Output(_, bytes) => {
-                                let _ = out.write_all(&bytes);
-                                let _ = out.flush();
+                                let _ = out.write_all(&bytes).await;
+                                let _ = out.flush().await;
                                 let character = '#';
                                 let byte: u8 = character as u8;
                                 if bytes.contains(&byte) {
