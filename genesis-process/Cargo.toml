@@ -4,3 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 [dependencies]
+uuid = "1.11.0"
+tracing = "0.1.40"
+tokio = {version="1.41.0", features = ["tracing", "signal","io-std"]}
+vt100 = "0.15.2"
+
+
+[dependencies.genesis-ssh]
+path="../genesis-ssh"
+
+[dependencies.genesis-common]
+path="../genesis-common"

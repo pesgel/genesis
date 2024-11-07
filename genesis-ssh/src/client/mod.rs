@@ -619,8 +619,8 @@ pub async fn start_ssh_connect(
             channel_id,
             ChannelOperation::RequestPty(crate::PtyRequest {
                 term: "xterm".into(),
-                col_width: 100,
-                row_height: 10,
+                col_width: 80,
+                row_height: 24,
                 pix_width: 0,
                 pix_height: 0,
                 modes: vec![],
