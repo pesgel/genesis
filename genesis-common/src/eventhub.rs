@@ -58,6 +58,9 @@ impl<'h, E: 'h> EventSender<E> {
 pub struct EventSubscription<E>(UnboundedReceiver<E>);
 
 impl<E> EventSubscription<E> {
+    pub fn unbox(self) -> UnboundedReceiver<E> {
+        self.0
+    }
     pub async fn recv(&mut self) -> Option<E> {
         self.0.recv().await
     }
