@@ -1,7 +1,9 @@
 //! process
 
+mod instruct;
 mod process;
 
+pub use instruct::*;
 pub use process::*;
 
 #[cfg(test)]

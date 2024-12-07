@@ -677,6 +677,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
     use uuid::Uuid;
     #[tokio::test]
+    #[ignore]
     async fn test_remote_client() {
         tracing_subscriber::fmt().init();
         let uuid = Uuid::new_v4();

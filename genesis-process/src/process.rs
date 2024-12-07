@@ -14,25 +14,27 @@ use tokio::{
 use tracing::info;
 use uuid::Uuid;
 
+use crate::{Execute, PreMatchTypeEnum};
+
 #[derive(Clone, Default)]
-enum ProcessState {
+enum PipeState {
     #[default]
     In,
     Out,
 }
 #[derive(Clone, Debug, Default)]
-pub struct ProcessCmd {
+pub struct PipeCmd {
     pub input: String,
     pub output: String,
 }
 
 #[derive(Debug)]
-pub struct ProcessPipe {
+pub struct Pipe {
     pub sender: UnboundedSender<Bytes>,
     pub reader: UnboundedReceiver<Bytes>,
 }
 
-impl ProcessPipe {
+impl Pipe {
     pub fn new(sender: UnboundedSender<Bytes>, reader: UnboundedReceiver<Bytes>) -> Self {
         Self { sender, reader }
     }
@@ -40,26 +42,28 @@ impl ProcessPipe {
 
 #[allow(dead_code)]
 #[derive(Default)]
-pub struct ProcessManger {
+pub struct PipeManger {
     ps1: Arc<RwLock<String>>,
     parser: Arc<Mutex<vt100::Parser>>,
-    state: Arc<RwLock<ProcessState>>,
+    state: Arc<RwLock<PipeState>>,
     out_buf: Arc<Mutex<vt100::Parser>>,
     input_buf: Arc<Mutex<vt100::Parser>>,
+    wait_times: u8,
 }
 
-impl ProcessManger {
+impl PipeManger {
     pub async fn do_interactive(
         &mut self,
-        mut in_io: ProcessPipe,
-        mut out_io: ProcessPipe,
-        cmd_sender: Option<UnboundedSender<ProcessCmd>>,
+        mut in_io: Pipe,
+        mut out_io: Pipe,
+        cmd_sender: Option<UnboundedSender<PipeCmd>>,
         abort_rc: &watch::Receiver<bool>,
     ) -> Result<(), String> {
         let mut abort_in_io: watch::Receiver<bool> = abort_rc.clone();
-        let a = tokio::spawn({
+        tokio::spawn({
             let ps1 = self.ps1.clone();
             let state = self.state.clone();
+            let wait_times = self.wait_times;
             async move {
                 loop {
                     select! {
@@ -80,21 +84,26 @@ impl ProcessManger {
                                     tokio::time::sleep(Duration::from_millis(20)).await;
                                 }
                                 // 判断输入状态是否是允许输入
+                                let mut now_wait_time = 0;
                                 loop {
-                                    select! {
-                                        _ = tokio::time::sleep(Duration::from_millis(200))=>{
-                                            info!("wait sate overtime break");
-                                            break;
+                                    match *state.read().await {
+                                        PipeState::In => break,
+                                        PipeState::Out => {
+                                            tokio::time::sleep(Duration::from_millis(20)).await;
+                                            now_wait_time += 1;
+                                            if now_wait_time >= wait_times {
+                                                info!("time out, break");
+                                                break;
+                                            }
                                         },
-                                        sa = state.read()=> match *sa {
-                                            ProcessState::In => break,
-                                            ProcessState::Out => {},
-                                        }
                                     }
                                 }
                                 let _ = out_io.sender.send(data);
                             },
-                            None => break,
+                            None => {
+                                info!("receive none");
+                                break
+                            },
                         }
                     }
                 }
@@ -102,7 +111,7 @@ impl ProcessManger {
         });
 
         // 接受返回数据,并发送到channel
-        let h = tokio::spawn({
+        tokio::spawn({
             let parser = self.parser.clone();
             let ps1 = self.ps1.clone();
             let stat = self.state.clone();
@@ -131,16 +140,16 @@ impl ProcessManger {
                                         continue 'ro;
                                     }
                                     if data.len() ==1 && data[0] == b'\r'{
-                                        *(stat.write().await) = ProcessState::Out;
+                                        *(stat.write().await) = PipeState::Out;
                                     }
                                     // 判断当前接受状态,若是输入状态,则写到input
                                     // 若是输出状态,则写入到output
                                     if !ps1.read().await.is_empty() {
                                         match *(stat.read().await) {
-                                            ProcessState::In => {
+                                            PipeState::In => {
                                                 input.lock().await.process(data);
                                             },
-                                            ProcessState::Out => {
+                                            PipeState::Out => {
                                                 output.lock().await.process(data);
                                             },
                                         }
@@ -149,7 +158,7 @@ impl ProcessManger {
                                     if let Some(p1) = extract_command_after_bell(&buffer){
                                         *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
                                         // 打印ps1,并清空
-                                        *(stat.write().await) = ProcessState::In;
+                                        *(stat.write().await) = PipeState::In;
                                         buffer.clear();
 
                                         let mut input = input.lock().await;
@@ -163,10 +172,12 @@ impl ProcessManger {
                                         let cmd_out = output.screen().contents().replace(ps1_value.as_str(), "").trim().to_string();
                                         output.process(b"\x1b[2J");
                                         if let Some(sender) = cmd_sender.clone() {
-                                            let _ = sender.send(ProcessCmd{
+                                            let pipe_cmd = PipeCmd{
                                                 input: cmd_input,
                                                 output: cmd_out,
-                                            });
+                                            };
+                                            info!("send:{:?}",pipe_cmd);
+                                            let _ = sender.send(pipe_cmd);
                                         }
                                     }
                                 }
@@ -185,11 +196,10 @@ impl ProcessManger {
                                 return ;
                             },
                         }
-                    };
+                    }
                 }
             }
         });
-        let _ = tokio::join!(a, h);
         Ok(())
     }
 
@@ -270,8 +280,8 @@ impl ProcessManger {
                                             break;
                                         },
                                         sa = state.read()=> match *sa {
-                                            ProcessState::In => break,
-                                            ProcessState::Out => {},
+                                            PipeState::In => break,
+                                            PipeState::Out => {},
                                         }
                                     }
                                 }
@@ -312,16 +322,16 @@ impl ProcessManger {
                                         continue 'ro;
                                     }
                                     if data.len() ==1 && data[0] == b'\r'{
-                                        *(stat.write().await) = ProcessState::Out;
+                                        *(stat.write().await) = PipeState::Out;
                                     }
                                     // 判断当前接受状态,若是输入状态,则写到input
                                     // 若是输出状态,则写入到output
                                     if !ps1.read().await.is_empty() {
                                         match *(stat.read().await) {
-                                            ProcessState::In => {
+                                            PipeState::In => {
                                                 input.lock().await.process(data);
                                             },
-                                            ProcessState::Out => {
+                                            PipeState::Out => {
                                                 output.lock().await.process(data);
                                             },
                                         }
@@ -330,7 +340,7 @@ impl ProcessManger {
                                     if let Some(p1) = extract_command_after_bell(&buffer){
                                         *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
                                         // 打印ps1,并清空
-                                        *(stat.write().await) = ProcessState::In;
+                                        *(stat.write().await) = PipeState::In;
                                         buffer.clear();
 
                                         let input = input.lock().await;
@@ -359,7 +369,7 @@ impl ProcessManger {
                                 return ;
                             },
                         }
-                    };
+                    }
                 }
             }
         });
@@ -385,6 +395,187 @@ fn extract_command_after_bell(data: &[u8]) -> Option<&[u8]> {
     }
     None
 }
+
+pub struct ProcessManger {
+    pub execute: Arc<Mutex<Execute>>,
+}
+
+pub type MatchFnType = Arc<Mutex<dyn Fn(&str) -> bool + Send>>;
+#[derive(Clone)]
+pub struct ExecuteFns {
+    pub fns: Vec<MatchFnType>,        // 使用 Arc<Mutex> 确保闭包线程安全
+    pub execute: Arc<Mutex<Execute>>, // 存储 Execute 的 Arc<Mutex>
+}
+
+impl ProcessManger {
+    #[allow(dead_code)]
+    pub async fn run(&mut self, uuid: Uuid, ssh_option: TargetSSHOptions) -> anyhow::Result<()> {
+        let (hub, sender) = start_ssh_connect(uuid, ssh_option).await?;
+        let receiver = hub.subscribe(|_| true).await;
+        let (sc, in_rc) = unbounded_channel::<Bytes>();
+        let (psc, _) = unbounded_channel::<Bytes>();
+
+        let in_pipe = Pipe::new(psc, in_rc);
+        let out_pipe = Pipe::new(sender, receiver.unbox());
+
+        let mut manager = PipeManger {
+            wait_times: 100,
+            ..Default::default()
+        };
+        let (abort_sc, abort_rc) = watch::channel(false);
+        let (cmd_sc, mut cmd_rc) = unbounded_channel();
+        let _ = manager
+            .do_interactive(in_pipe, out_pipe, Some(cmd_sc), &abort_rc)
+            .await;
+        let res = manager.out_buf.clone();
+        let state = manager.state.clone();
+        let mut abort_execute_cmd = abort_rc.clone();
+
+        let (cmd_sender, mut cmd_excuter) = unbounded_channel();
+
+        cmd_sender.send(self.execute.clone())?;
+
+        let a: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+            loop {
+                match cmd_excuter.recv().await {
+                    Some(execute) => {
+                        let exe = execute.lock().await.clone();
+                        let mut cmd = exe.node.core.cmd.clone();
+                        if !cmd.ends_with('\r') {
+                            cmd.push('\r');
+                        }
+                        // 发送命令到远程执行
+                        let _ = sc.send(cmd.into());
+                        // 执行完毕,根据子节点配置pre数据,判断需要走哪条分支
+                        if exe.children.is_empty() {
+                            return;
+                        }
+                        // children存在,组装出ExecuteFns
+                        let execute_fns = RwLock::new(Vec::new());
+                        // 整理子节点
+                        for children_node_arc in exe.children {
+                            let children_node = children_node_arc.lock().await.clone();
+                            let mut mm_fn: Vec<MatchFnType> = Vec::new();
+                            match children_node.node.pre {
+                                Some(pre) => {
+                                    // pre存在,则获取其中的值
+                                    for pre_item in pre.list {
+                                        match pre_item.match_type {
+                                            PreMatchTypeEnum::Eq => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    info!("input eq:{}", s);
+                                                    s == pre_item.value
+                                                })));
+                                            }
+                                            PreMatchTypeEnum::Reg => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    s == pre_item.value
+                                                })));
+                                            }
+                                            PreMatchTypeEnum::Contains => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    info!("input contains:{}", s);
+                                                    s.contains(&pre_item.value)
+                                                })));
+                                            }
+                                        }
+                                    }
+                                }
+                                None => continue,
+                            }
+                            execute_fns.write().await.push(ExecuteFns {
+                                fns: mm_fn,
+                                execute: children_node_arc,
+                            });
+                        }
+                        //存在子节点,等待子节点匹配
+                        loop {
+                            select! {
+                                flag = abort_execute_cmd.changed() => match flag {
+                                    Ok(_) => {
+                                        if *abort_execute_cmd.borrow() {
+                                            return; // 如果收到中止命令，退出
+                                        }
+                                    },
+                                    Err(_) => return, // 如果接收到错误，也退出
+                                },
+                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                    let content = &res.lock().await.screen().contents(); // 获取屏幕内容
+                                    info!("receive content: {}", content);
+                                    match process_execute_fns(&execute_fns, content, &cmd_sender, &state).await{
+                                        Ok(_) => {
+                                            info!("stop loop");
+                                            break;
+                                        },
+                                        Err(e) => {
+                                            info!("match error:{}",e);
+                                        },
+                                    }
+                                },
+                                ma = cmd_rc.recv() => match ma {
+                                    Some(md) => {
+                                        let content = md.output.clone();
+                                        info!("receive cmd: {}", content);
+                                        match process_execute_fns(&execute_fns, &content, &cmd_sender, &state).await{
+                                            Ok(_) => {
+                                                info!("stop loop");
+                                                break;
+                                            },
+                                            Err(e) => {
+                                                info!("match error:{}",e);
+                                            },
+                                        }
+                                    },
+                                    None => break, // 如果没有命令，退出循环
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        info!("stop execute cmd");
+                        break;
+                    }
+                }
+            }
+        });
+        let _ = tokio::join!(a);
+        let _ = abort_sc.send(true);
+        info!("end cmd");
+        anyhow::Ok(())
+    }
+}
+
+// 拆分判断所有条件是否满足的函数
+async fn check_conditions(fns: &[MatchFnType], input: &str) -> bool {
+    for ef in fns {
+        let x = ef.lock().await;
+        if !(*x)(input) {
+            return false;
+        }
+    }
+    true
+}
+
+// 拆分匹配并执行的逻辑
+async fn process_execute_fns(
+    execute_fns: &RwLock<Vec<ExecuteFns>>,
+    input: &str,
+    cmd_sender: &UnboundedSender<Arc<Mutex<Execute>>>,
+    state: &RwLock<PipeState>,
+) -> anyhow::Result<()> {
+    for fnn in execute_fns.read().await.iter() {
+        if check_conditions(&fnn.fns, input).await {
+            // 发送命令
+            cmd_sender.send(fnn.execute.clone())?;
+            // 更新状态
+            *state.write().await = PipeState::In;
+            // 如果找到匹配的条件，跳出循环
+            return anyhow::Ok(());
+        }
+    }
+    anyhow::bail!("not match any branch")
+}
+
 #[cfg(test)]
 mod tests {
     use std::{iter::once, time::Duration};
@@ -396,19 +587,174 @@ mod tests {
     use tracing::info;
     use uuid::Uuid;
 
-    use crate::ProcessPipe;
+    use super::PipeManger;
+    use crate::{Core, Edge, Item, Node, Pipe, Pre};
 
-    use super::ProcessManger;
+    use crate::{Graph, InData};
+
+    use super::*;
+    #[tokio::test]
+    #[ignore]
+    async fn test_graph_building() {
+        let new_password = "%]m73MmQ";
+        //let old_password = "#wR61V(s";
+        let old_password = "#wR61V(s";
+        tracing_subscriber::fmt().init();
+        // 创建一些测试数据
+        let in_data = InData {
+            nodes: vec![
+                Node {
+                    id: "1".to_string(),
+                    pre: None,
+                    core: Core {
+                        des: "判断是否是home目录".to_string(),
+                        cmd: "pwd".to_string(),
+                    },
+                    post: None,
+                },
+                Node {
+                    id: "2".to_string(),
+                    pre: Some(Pre {
+                        list: vec![Item {
+                            value: "home/yangping".to_string(),
+                            match_type: PreMatchTypeEnum::Contains,
+                        }],
+                    }),
+                    core: Core {
+                        des: "home目录执行密码变更".to_string(),
+                        cmd: "passwd".to_string(),
+                    },
+                    post: None,
+                },
+                Node {
+                    id: "3".to_string(),
+                    pre: Some(Pre {
+                        list: vec![Item {
+                            value: "/root".to_string(),
+                            match_type: PreMatchTypeEnum::Contains,
+                        }],
+                    }),
+                    core: Core {
+                        des: "root目录直接退出".to_string(),
+                        cmd: "exit".to_string(),
+                    },
+                    post: None,
+                },
+                Node {
+                    id: "4".to_string(),
+                    pre: Some(Pre {
+                        list: vec![Item {
+                            value: "current".to_string(),
+                            match_type: PreMatchTypeEnum::Contains,
+                        }],
+                    }),
+                    core: Core {
+                        des: "输入当前密码".to_string(),
+                        cmd: old_password.to_string(),
+                    },
+                    post: None,
+                },
+                Node {
+                    id: "5".to_string(),
+                    pre: Some(Pre {
+                        list: vec![Item {
+                            value: "New password".to_string(),
+                            match_type: PreMatchTypeEnum::Contains,
+                        }],
+                    }),
+                    core: Core {
+                        des: "输入新密码".to_string(),
+                        cmd: new_password.to_string(),
+                    },
+                    post: None,
+                },
+                Node {
+                    id: "6".to_string(),
+                    pre: Some(Pre {
+                        list: vec![Item {
+                            value: "Retype new password".to_string(),
+                            match_type: PreMatchTypeEnum::Contains,
+                        }],
+                    }),
+                    core: Core {
+                        des: "确认新密码".to_string(),
+                        cmd: new_password.to_string(),
+                    },
+                    post: None,
+                },
+                Node {
+                    id: "7".to_string(),
+                    pre: Some(Pre {
+                        list: vec![Item {
+                            value: "success".to_string(),
+                            match_type: PreMatchTypeEnum::Contains,
+                        }],
+                    }),
+                    core: Core {
+                        des: "退出".to_string(),
+                        cmd: "exit".to_string(),
+                    },
+                    post: None,
+                },
+            ],
+            edges: vec![
+                Edge {
+                    source: "1".to_string(),
+                    target: "2".to_string(),
+                },
+                Edge {
+                    source: "1".to_string(),
+                    target: "3".to_string(),
+                },
+                Edge {
+                    source: "2".to_string(),
+                    target: "4".to_string(),
+                },
+                Edge {
+                    source: "4".to_string(),
+                    target: "5".to_string(),
+                },
+                Edge {
+                    source: "5".to_string(),
+                    target: "6".to_string(),
+                },
+                Edge {
+                    source: "6".to_string(),
+                    target: "7".to_string(),
+                },
+            ],
+        };
+        let mut graph = Graph::new();
+        graph.build_from_edges(in_data).await;
+        // 打印图的结构
+        // graph.print_graph().await;
+        let execute = graph.start_node().await.unwrap();
+
+        let mut pm = ProcessManger { execute };
+
+        let option = TargetSSHOptions {
+            host: "10.0.1.52".into(),
+            port: 22,
+            username: "yangping".into(),
+            allow_insecure_algos: Some(true),
+            auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
+                password: old_password.to_string(),
+            }),
+        };
+        let _ = pm.run(Uuid::new_v4(), option).await;
+    }
 
     #[tokio::test]
+    #[ignore]
     async fn test_parser_manager_test() {
         tracing_subscriber::fmt().init();
-        let mut pm = ProcessManger::default();
+        let mut pm = PipeManger::default();
         pm.do_interactive_test().await;
         info!("end")
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_parser_manager() {
         tracing_subscriber::fmt().init();
         let uuid = Uuid::new_v4();
@@ -430,10 +776,10 @@ mod tests {
         let (sc, in_rc) = unbounded_channel::<Bytes>();
         let (psc, _) = unbounded_channel::<Bytes>();
 
-        let in_pipe = ProcessPipe::new(psc, in_rc);
-        let out_pipe = ProcessPipe::new(sender, receiver.unbox());
+        let in_pipe = Pipe::new(psc, in_rc);
+        let out_pipe = Pipe::new(sender, receiver.unbox());
 
-        let mut manager = ProcessManger::default();
+        let mut manager = PipeManger::default();
         let (abort_sc, abort_rc) = watch::channel(false);
         let (cmd_sc, mut cmd_rc) = unbounded_channel();
         let ma = manager.do_interactive(in_pipe, out_pipe, Some(cmd_sc), &abort_rc);
@@ -495,4 +841,7 @@ mod tests {
             println!("{:?},{}", part, part.is_empty());
         }
     }
+
+    #[tokio::test]
+    async fn test_continue() {}
 }

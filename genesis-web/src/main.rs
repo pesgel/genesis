@@ -9,7 +9,9 @@ async fn main() {
     match cli.command {
         Commands::Run { mode, config } => {
             // set log level
-            env::set_var("RUST_LOG", mode.as_ref());
+            unsafe {
+                env::set_var("RUST_LOG", mode.as_ref());
+            }
             tracing_subscriber::fmt::init();
             // set config
             config::parse_config(&config).await.unwrap();
