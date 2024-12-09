@@ -5,7 +5,7 @@ edition = "2021"
 license = "Apache-2.0"
 [dependencies]
 anyhow = "1.0.91"
-axum = { version = "0.7.7", features = ["ws","macros"] }
+axum = { version = "0.7.7", features = ["ws", "macros"] }
 bytes = "1.8.0"
 clap = { version = "4.5.20", features = ["derive"] }
 futures-util = "0.3.31"
@@ -21,14 +21,16 @@ tracing-subscriber = "0.3.18"
 uuid = "1.11.0"
 
 validator = { version = "0.19.0", features = ["derive"] }
-sea-orm = {version="1.1.2",features=["debug-print","runtime-tokio-native-tls","sqlx-mysql"]}
+sea-orm = { version = "1.1.2", features = ["debug-print", "runtime-tokio-native-tls", "sqlx-mysql"] }
 chrono = "0.4.38"
 
+getset = "0.1.2"
+
 [dependencies.genesis-ssh]
-path="../genesis-ssh"
+path = "../genesis-ssh"
 
 [dependencies.genesis-common]
-path="../genesis-common"
+path = "../genesis-common"
 
 [dependencies.genesis-process]
-path="../genesis-process"
+path = "../genesis-process"

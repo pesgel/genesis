@@ -155,6 +155,7 @@ impl PipeManger {
                                         }
                                     }
                                     buffer.extend_from_slice(data);
+                                    info!("data: {:?}",buffer);
                                     if let Some(p1) = extract_command_after_bell(&buffer){
                                         *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
                                         // 打印ps1,并清空
@@ -381,7 +382,8 @@ impl PipeManger {
     }
 }
 
-fn extract_command_after_bell(data: &[u8]) -> Option<&[u8]> {
+#[allow(dead_code)]
+fn extract_command_after_bell_back(data: &[u8]) -> Option<&[u8]> {
     // 查找最后一个 \x1b] 的位置
     let start_pos = data.windows(2).rposition(|w| w == [0x1b, b']']);
     // 查找最后一个 \x07 的位置
@@ -394,6 +396,19 @@ fn extract_command_after_bell(data: &[u8]) -> Option<&[u8]> {
         }
     }
     None
+}
+fn extract_command_after_bell(data: &[u8]) -> Option<&[u8]> {
+    // 将字节流按行拆分
+    let lines: Vec<&[u8]> = data.split(|&b| b == b'\n').collect();
+
+    // 从最后一行开始向前查找，找到包含 \x1b 的行
+    for line in lines.iter().rev() {
+        if line.contains(&0x1b) {
+            // 查找是否包含 \x1b
+            return Some(*line);
+        }
+    }
+    None // 如果没有找到包含 \x1b 的行
 }
 
 pub struct ProcessManger {
@@ -445,6 +460,7 @@ impl ProcessManger {
                             cmd.push('\r');
                         }
                         // 发送命令到远程执行
+                        info!("send node:{} cmd:{}", exe.node.id, cmd);
                         let _ = sc.send(cmd.into());
                         // 执行完毕,根据子节点配置pre数据,判断需要走哪条分支
                         if exe.children.is_empty() {
@@ -474,8 +490,14 @@ impl ProcessManger {
                                             }
                                             PreMatchTypeEnum::Contains => {
                                                 mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
-                                                    info!("input contains:{}", s);
-                                                    s.contains(&pre_item.value)
+                                                    s.to_lowercase()
+                                                        .contains(&pre_item.value.to_lowercase())
+                                                })));
+                                            }
+                                            PreMatchTypeEnum::NotContains => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    !s.to_lowercase()
+                                                        .contains(&pre_item.value.to_lowercase())
                                                 })));
                                             }
                                         }
@@ -499,16 +521,16 @@ impl ProcessManger {
                                     },
                                     Err(_) => return, // 如果接收到错误，也退出
                                 },
-                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                _ = tokio::time::sleep(Duration::from_secs(3)) => {
                                     let content = &res.lock().await.screen().contents(); // 获取屏幕内容
                                     info!("receive content: {}", content);
                                     match process_execute_fns(&execute_fns, content, &cmd_sender, &state).await{
                                         Ok(_) => {
-                                            info!("stop loop");
+                                            info!("time stop loop");
                                             break;
                                         },
-                                        Err(e) => {
-                                            info!("match error:{}",e);
+                                        Err(_) => {
+                                            info!("time all not match content:{}\n",content);
                                         },
                                     }
                                 },
@@ -518,11 +540,11 @@ impl ProcessManger {
                                         info!("receive cmd: {}", content);
                                         match process_execute_fns(&execute_fns, &content, &cmd_sender, &state).await{
                                             Ok(_) => {
-                                                info!("stop loop");
+                                                info!("cmd stop loop");
                                                 break;
                                             },
-                                            Err(e) => {
-                                                info!("match error:{}",e);
+                                            Err(_) => {
+                                                info!("cmd all not match content:{}\n",content);
                                             },
                                         }
                                     },
@@ -563,7 +585,11 @@ async fn process_execute_fns(
     cmd_sender: &UnboundedSender<Arc<Mutex<Execute>>>,
     state: &RwLock<PipeState>,
 ) -> anyhow::Result<()> {
-    for fnn in execute_fns.read().await.iter() {
+    let efn = execute_fns.read().await;
+    if efn.is_empty() {
+        return anyhow::Ok(());
+    }
+    for fnn in efn.iter() {
         if check_conditions(&fnn.fns, input).await {
             // 发送命令
             cmd_sender.send(fnn.execute.clone())?;
@@ -588,7 +614,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::PipeManger;
-    use crate::{Core, Edge, Item, Node, Pipe, Pre};
+    use crate::{Core, Edge, Item, Node, Pipe, Position, Pre};
 
     use crate::{Graph, InData};
 
@@ -611,6 +637,7 @@ mod tests {
                         cmd: "pwd".to_string(),
                     },
                     post: None,
+                    position: Position::default(),
                 },
                 Node {
                     id: "2".to_string(),
@@ -625,6 +652,7 @@ mod tests {
                         cmd: "passwd".to_string(),
                     },
                     post: None,
+                    position: Position::default(),
                 },
                 Node {
                     id: "3".to_string(),
@@ -639,6 +667,7 @@ mod tests {
                         cmd: "exit".to_string(),
                     },
                     post: None,
+                    position: Position::default(),
                 },
                 Node {
                     id: "4".to_string(),
@@ -653,6 +682,7 @@ mod tests {
                         cmd: old_password.to_string(),
                     },
                     post: None,
+                    position: Position::default(),
                 },
                 Node {
                     id: "5".to_string(),
@@ -667,6 +697,7 @@ mod tests {
                         cmd: new_password.to_string(),
                     },
                     post: None,
+                    position: Position::default(),
                 },
                 Node {
                     id: "6".to_string(),
@@ -681,6 +712,7 @@ mod tests {
                         cmd: new_password.to_string(),
                     },
                     post: None,
+                    position: Position::default(),
                 },
                 Node {
                     id: "7".to_string(),
@@ -695,6 +727,7 @@ mod tests {
                         cmd: "exit".to_string(),
                     },
                     post: None,
+                    position: Position::default(),
                 },
             ],
             edges: vec![

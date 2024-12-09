@@ -3,9 +3,12 @@ use axum::{
     Json,
 };
 use genesis_common::{SshTargetPasswordAuth, TargetSSHOptions};
-use serde_json::{json, Value};
+use tracing::error;
 use uuid::Uuid;
 
+use crate::adapter::vo::instruct::InstructVO;
+use crate::repo::model::instruct;
+use crate::repo::sea::InstructRepo;
 use crate::{
     adapter::cqe::Response,
     config::AppState,
@@ -13,162 +16,22 @@ use crate::{
 };
 use genesis_process::{Graph, InData, ProcessManger};
 
-pub async fn get_instruct_by_id(Path(_): Path<String>) -> Result<Json<Value>, AppError> {
-    // 使用 `serde_json::json!` 构建 JSON 数据
-    let response_data = json!(
-            {
-        "nodes": [{
-            "id": "1",
-            "core": {
-                "des": "修改密码",
-                "cmd": "passwd"
-            },
-            "position": {
-                "x": 85.08970203951566,
-                "y": 13.90948773103888
-            }
-        }, {
-            "id": "2",
-            "pre": {
-                "list": [{
-                    "value": "current",
-                    "matchType": "contains"
-                }]
-            },
-            "core": {
-                "des": "输入当前密码",
-                "cmd": "%]m73MmQ"
-            },
-            "position": {
-                "x": 85.88779397705542,
-                "y": 84.05067957297638
-            }
-        }, {
-            "id": "3",
-            "pre": {
-                "list": [{
-                    "value": "New password",
-                    "matchType": "contains"
-                }]
-            },
-            "core": {
-                "des": "输入新密码",
-                "cmd": "#wR61V(s"
-            },
-            "position": {
-                "x": -21.5,
-                "y": 176.5
-            }
-        }, {
-            "id": "4",
-            "pre": {
-                "list": [{
-                    "value": "Retype new password",
-                    "matchType": "contains"
-                }]
-            },
-            "core": {
-                "des": "确认新密码",
-                "cmd": "#wR61V(s"
-            },
-            "position": {
-                "x": -20.541787019541346,
-                "y": 245.11686020076843
-            }
-        }, {
-            "id": "5",
-            "core": {
-                "des": "退出",
-                "cmd": "exit"
-            },
-            "position": {
-                "x": 76.13174833561897,
-                "y": 400.2398151274464
-            }
-        }, {
-            "id": "6",
-            "pre": {
-                "list": [{
-                    "value": "current",
-                    "matchType": "contains"
-                }]
-            },
-            "core": {
-                "des": "密码错误",
-                "cmd": "#wR61V(s"
-            },
-            "position": {
-                "x": 189.84280866357432,
-                "y": 174.3101668743471
-            }
-        }, {
-            "id": "7",
-            "pre": {
-                "list": [{
-                    "value": "New password\t",
-                    "matchType": "contains"
-                }]
-            },
-            "core": {
-                "des": "新密码",
-                "cmd": "%]m73MmQ"
-            },
-            "position": {
-                "x": 193.77941241654605,
-                "y": 244.1503166263235
-            }
-        }, {
-            "id": "8",
-            "pre": {
-                "list": [{
-                    "value": "Retype new password\t",
-                    "matchType": "contains"
-                }]
-            },
-            "core": {
-                "des": "确认新密码",
-                "cmd": "%]m73MmQ"
-            },
-            "position": {
-                "x": 192.87941048675248,
-                "y": 319.9304791149371
-            }
-        }],
-        "edges": [{
-            "source": "1",
-            "target": "2"
-        }, {
-            "source": "2",
-            "target": "3"
-        }, {
-            "source": "3",
-            "target": "4"
-        }, {
-            "source": "4",
-            "target": "5"
-        }, {
-            "source": "8",
-            "target": "5"
-        }, {
-            "source": "6",
-            "target": "7"
-        }, {
-            "source": "7",
-            "target": "8"
-        }, {
-            "source": "2",
-            "target": "6"
-        }]
-    }
-        );
-    // 返回 JSON 数据
-    Ok(Json(response_data))
-}
-
 pub async fn save_and_execute(
-    State(_): State<AppState>,
+    State(state): State<AppState>,
     AppJson(data): AppJson<InData>,
 ) -> Result<Json<Response>, AppError> {
+    match serde_json::to_string(&data) {
+        Ok(str) => {
+            let mut model = instruct::Model::new();
+            model.id = Uuid::new_v4().to_string();
+            model.name = "test".to_string();
+            model.data = str;
+            InstructRepo::insert_instruct_one(&state.conn, model.into()).await?;
+        }
+        Err(e) => {
+            error!("marshal in data error:{:?}", e)
+        }
+    }
     // 构建图
     let mut graph = Graph::new();
     graph.build_from_edges(data).await;
@@ -181,12 +44,12 @@ pub async fn save_and_execute(
     // let old_password = "#wR61V(s";
     // TODO 敏感信息排除
     let option = TargetSSHOptions {
-        host: "106.54.225.80".into(),
-        port: 22,
-        username: "yangping".into(),
+        host: "127.0.0.1".into(),
+        port: 32222,
+        username: "root".into(),
         allow_insecure_algos: Some(true),
         auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
-            password: "#wR61V(s".to_string(),
+            password: "123456".to_string(),
         }),
     };
     // 执行
@@ -194,6 +57,48 @@ pub async fn save_and_execute(
     Ok(Json(Response::default()))
 }
 
+pub async fn get_instruct_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<InstructVO>, AppError> {
+    InstructRepo::get_instruct_by_id(&state.conn, &id)
+        .await
+        .map(|d| {
+            Ok(Json(InstructVO {
+                id: d.id,
+                data: d.data,
+                name: d.name,
+                des: d.des,
+                created_by: d.created_by,
+                updated_by: d.updated_by,
+                created_at: d.created_at,
+                updated_at: d.updated_at,
+            }))
+        })?
+}
+
+pub async fn list_instruct(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<InstructVO>>, AppError> {
+    InstructRepo::find_instruct_by(&state.conn)
+        .await
+        .map(|list| {
+            Ok(Json(
+                list.into_iter()
+                    .map(|d| InstructVO {
+                        id: d.id,
+                        data: d.data,
+                        name: d.name,
+                        des: d.des,
+                        created_by: d.created_by,
+                        updated_by: d.updated_by,
+                        created_at: d.created_at,
+                        updated_at: d.updated_at,
+                    })
+                    .collect(),
+            ))
+        })?
+}
 #[cfg(test)]
 mod tests {
     use genesis_process::InData;

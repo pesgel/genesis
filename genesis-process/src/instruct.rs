@@ -12,6 +12,7 @@ pub enum PreMatchTypeEnum {
     Reg,
     #[default]
     Contains,
+    NotContains,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,12 +34,18 @@ pub struct Core {
     pub des: String,
     pub cmd: String,
 }
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Position {
+    x: f64,
+    y: f64,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub id: String,
     pub pre: Option<Pre>,
     pub core: Core,
     pub post: Option<Post>,
+    pub position: Position,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

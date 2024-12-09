@@ -3,6 +3,7 @@ use axum::{
     Router,
 };
 
+use crate::adapter::http::handlers::list_instruct;
 use crate::{
     adapter::http::{
         handler_ssh,
@@ -19,6 +20,7 @@ pub async fn routes(state: AppState) -> Router {
             "/api/instruct",
             Router::new()
                 .route("/:id", get(get_instruct_by_id))
+                .route("/list", post(list_instruct))
                 .route("/", post(save_and_execute)),
         )
         .with_state(state)

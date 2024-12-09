@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 pub mod cmd;
-
+pub mod vo;
 // How we want errors responses to be serialized
 #[derive(Clone, Serialize)]
 pub struct Response {
