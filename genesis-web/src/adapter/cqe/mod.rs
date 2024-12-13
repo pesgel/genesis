@@ -1,21 +1,69 @@
 use serde::Serialize;
 
 pub mod cmd;
+pub mod query;
 pub mod vo;
+
 // How we want errors responses to be serialized
 #[derive(Clone, Serialize)]
-pub struct Response {
-    status: u16,
-    message: String,
-    timestamp: String,
+pub struct ResponseSuccess {
+    code: u16,
+    msg: String,
 }
 
-impl Default for Response {
+impl Default for ResponseSuccess {
     fn default() -> Self {
         Self {
-            status: 200,
-            message: "success".to_string(),
-            timestamp: chrono::Local::now().to_string(),
+            code: 200,
+            msg: "success".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct Response<T>
+where
+    T: Serialize,
+{
+    pub code: u16,
+    pub msg: String,
+    pub data: Option<T>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ResList<T>
+where
+    T: Serialize,
+{
+    list: Vec<T>,
+    total: u64,
+}
+
+impl<T> ResList<T>
+where
+    T: Serialize,
+{
+    pub fn new(total: u64, list: Vec<T>) -> ResList<T> {
+        Self { total, list }
+    }
+}
+
+impl<T> Response<T>
+where
+    T: Serialize,
+{
+    pub fn new_success(t: T) -> Response<T> {
+        Self {
+            code: 200,
+            msg: "success".to_string(),
+            data: Some(t),
+        }
+    }
+    pub fn new_failure(msg: String) -> Response<T> {
+        Self {
+            msg,
+            code: 400,
+            data: None,
         }
     }
 }

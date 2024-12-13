@@ -3,12 +3,9 @@ use axum::{
     Router,
 };
 
-use crate::adapter::http::handlers::list_instruct;
+use crate::adapter::http::handlers::{execute_instruct_by_id, list_instruct, save_instruct};
 use crate::{
-    adapter::http::{
-        handler_ssh,
-        handlers::{get_instruct_by_id, save_and_execute},
-    },
+    adapter::http::{handler_ssh, handlers::get_instruct_by_id},
     config::AppState,
 };
 
@@ -19,9 +16,10 @@ pub async fn routes(state: AppState) -> Router {
         .nest(
             "/api/instruct",
             Router::new()
+                .route("/", post(save_instruct))
                 .route("/:id", get(get_instruct_by_id))
                 .route("/list", post(list_instruct))
-                .route("/", post(save_and_execute)),
+                .route("/execute/:id", post(execute_instruct_by_id)),
         )
         .with_state(state)
 }

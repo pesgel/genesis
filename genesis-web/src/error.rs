@@ -42,8 +42,8 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         // 格式化时间为字符串，格式为：2022-02-02T18:12:23.443
         AppJson(ErrorResponse {
-            status: StatusCode::BAD_REQUEST.as_u16(),
-            message: self.to_string(),
+            code: StatusCode::BAD_REQUEST.as_u16(),
+            msg: self.to_string(),
             timestamp: chrono::Local::now()
                 .format("%Y-%m-%dT%H:%M:%S%.3f")
                 .to_string(),
@@ -76,8 +76,8 @@ pub enum AuthError {
 // How we want errors responses to be serialized
 #[derive(Serialize)]
 pub struct ErrorResponse {
-    status: u16,
-    message: String,
+    code: u16,
+    msg: String,
     timestamp: String,
 }
 
