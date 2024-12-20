@@ -65,11 +65,11 @@ pub enum AxumHttpError {
 
 #[derive(Error, Debug)]
 pub enum AuthError {
-    #[error("token不存在")]
+    #[error("token does not exist")]
     MissingToken,
-    #[error("token已过期")]
+    #[error("token expired")]
     TokenExpired,
-    #[error("token校验错误")]
+    #[error("token check error")]
     InvalidToken,
 }
 

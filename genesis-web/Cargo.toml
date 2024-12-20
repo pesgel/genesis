@@ -26,6 +26,10 @@ chrono = "0.4.38"
 
 getset = "0.1.2"
 
+jsonwebtoken = "9.3.0"
+
+redis = { version = "0.25.4", features = ["tokio-comp"] }
+
 [dependencies.genesis-ssh]
 path = "../genesis-ssh"
 

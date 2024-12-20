@@ -7,14 +7,18 @@ pub use alias::*;
 use std::path::Path;
 
 use serde::Deserialize;
+use tracing::info;
 
 use crate::error::AppError;
+use crate::util::jwt::JwtConfig;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AppConfig {
     pub server: ServerConfig,
     #[serde(rename = "mysql")]
     pub mysql_config: MysqlConfig,
+    #[serde(rename = "jwt")]
+    pub jwt_config: JwtConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -50,6 +54,7 @@ pub async fn parse_config(path: &Path) -> Result<AppConfig, AppError> {
     let data = std::fs::read_to_string(path).unwrap();
     // convert
     let config: AppConfig = toml::from_str(&data).unwrap();
+    info!("config:{:?}", config);
     // build global config
     let mut init_config = SHARED_APP_CONFIG.write().await;
     *init_config = config.clone();

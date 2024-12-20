@@ -1,5 +1,8 @@
 mod instruct;
 pub use instruct::*;
+
+mod user;
+pub use user::*;
 #[cfg(test)]
 mod tests {
     use crate::config::{init_shared_app_state, AppConfig};
@@ -13,6 +16,7 @@ mod tests {
         let mut config = AppConfig {
             server: Default::default(),
             mysql_config: Default::default(),
+            jwt_config: Default::default(),
         };
         config.mysql_config.host = "127.0.0.1:13306".to_string();
         config.mysql_config.database = "genesis".to_string();

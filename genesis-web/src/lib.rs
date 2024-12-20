@@ -6,6 +6,7 @@ pub mod common;
 pub mod config;
 pub mod error;
 pub mod repo;
+pub mod util;
 
 #[derive(Clone, Default)]
 pub struct AppState {
