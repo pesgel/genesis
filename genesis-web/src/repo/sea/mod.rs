@@ -1,7 +1,10 @@
 mod instruct;
 pub use instruct::*;
 
+mod node;
 mod user;
+
+pub use node::*;
 pub use user::*;
 #[cfg(test)]
 mod tests {
