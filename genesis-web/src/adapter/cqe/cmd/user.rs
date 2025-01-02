@@ -9,7 +9,7 @@ pub struct UserLoginCmd {
     pub password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Validate)]
 pub struct UserRegisterCmd {
     #[validate(length(min = 1, message = "username is empty"))]
     pub username: String,

@@ -64,6 +64,6 @@ pub async fn user_register(
         remark: data.remark,
         ..Default::default()
     };
-    UserRepo::insert_user_one(&state.conn, user.into()).await?;
+    UserRepo::insert_user_one(&state.conn, user).await?;
     Ok(Json(ResponseSuccess::default()))
 }

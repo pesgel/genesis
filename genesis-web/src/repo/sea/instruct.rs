@@ -1,8 +1,8 @@
 //! instruct repo
 use crate::repo::model::instruct;
+use crate::repo::sea::SeaRepo;
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, DbConn, DbErr, EntityTrait, PaginatorTrait};
-use tracing::info;
+use sea_orm::{ActiveModelTrait, DbConn, DbErr, EntityTrait};
 
 pub struct InstructRepo;
 
@@ -43,11 +43,7 @@ impl InstructRepo {
     pub async fn find_instruct_by(
         db: &DbConn,
         pg: (u64, u64),
-    ) -> Result<(u64, Vec<instruct::Model>), DbErr> {
-        info!("{:?}", pg);
-        let ens = instruct::Entity::find().paginate(db, pg.1);
-        let count = ens.num_items().await?;
-        let res = ens.fetch_page(0).await?;
-        Ok((count, res))
+    ) -> anyhow::Result<(u64, Vec<instruct::Model>)> {
+        SeaRepo::page_with_default::<instruct::Entity>(db, pg, None).await
     }
 }
