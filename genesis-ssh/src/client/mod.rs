@@ -14,14 +14,14 @@ use channel_direct_tcpip::DirectTCPIPChannel;
 use channel_session::SessionChannel;
 pub use error::SshClientError;
 use futures::pin_mut;
-use genesis_common::EventHub;
+use genesis_common::{EventHub, NotifyEnum};
 use genesis_common::{SSHTargetAuth, SessionId, TargetSSHOptions};
 use handler::ClientHandler;
 use russh::client::Handle;
 use russh::keys::key::PublicKey;
 use russh::{kex, Preferred, Sig};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 use tracing::*;
 use uuid::Uuid;
@@ -597,7 +597,11 @@ impl Drop for RemoteClient {
 pub async fn start_ssh_connect(
     uuid: Uuid,
     option: TargetSSHOptions,
-) -> anyhow::Result<(EventHub<Bytes>, UnboundedSender<Bytes>)> {
+) -> Result<(
+    EventHub<Bytes>,
+    UnboundedSender<Bytes>,
+    watch::Receiver<NotifyEnum>,
+)> {
     // step1. start connect
     let mut handle = RemoteClient::create(uuid)?;
     let (tx, rx) = oneshot::channel();
@@ -640,15 +644,24 @@ pub async fn start_ssh_connect(
 
     // step5 create event hub
     let (hub, sender) = EventHub::setup();
+    let (notify_sender, notify_receiver) = watch::channel(NotifyEnum::INIT);
     // step6. start ssh channel
     tokio::spawn(async move {
         while let Some(e) = handle.event_rx.recv().await {
             match e {
-                crate::RCEvent::Output(_, bytes) => {
+                RCEvent::Output(_, bytes) => {
                     let _ = sender.send_once(bytes).await;
                 }
+                RCEvent::ConnectionError(e) => {
+                    error!("connection error:{:?}", e);
+                    let _ = notify_sender.send(NotifyEnum::ERROR(e.to_string()));
+                }
+                RCEvent::State(RCState::Connected) => {
+                    info!("state Connected");
+                    let _ = notify_sender.send(NotifyEnum::SUCCESS);
+                }
                 _ => {
-                    info!("receive envent : {:?}", e);
+                    info!("receive event : {:?}", e);
                 }
             }
         }
@@ -666,7 +679,7 @@ pub async fn start_ssh_connect(
                 .unwrap();
         }
     });
-    anyhow::Ok((hub, tx))
+    anyhow::Ok((hub, tx, notify_receiver.clone()))
 }
 
 #[cfg(test)]
@@ -685,7 +698,7 @@ mod tests {
         let rc = RemoteClient::create(uuid);
         match rc {
             Ok(mut handle) => {
-                // step1. create connetct
+                // step1. create connect
                 let (tx, rx) = oneshot::channel();
                 info!("start connect");
                 let message = (

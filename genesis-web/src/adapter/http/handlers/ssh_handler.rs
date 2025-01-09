@@ -15,7 +15,7 @@ use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
-use genesis_common::{EventHub, SshTargetPasswordAuth, TargetSSHOptions};
+use genesis_common::{EventHub, NotifyEnum, SshTargetPasswordAuth, TargetSSHOptions};
 use genesis_ssh::start_ssh_connect;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{debug, error, info};
@@ -38,9 +38,8 @@ pub async fn handler_ssh(ws: WebSocketUpgrade, State(state): State<AppState>) ->
             password: "1qaz2wsx".into(),
         }),
     };
-
     match start_ssh_connect(uuid, option).await {
-        Ok((hub, xs)) => {
+        Ok((hub, xs, mut abort_rc)) => {
             let (tx, rx) = unbounded_channel::<()>();
             // step2. 绑定输入输出
             ws.on_upgrade(move |socket| {
@@ -48,7 +47,21 @@ pub async fn handler_ssh(ws: WebSocketUpgrade, State(state): State<AppState>) ->
                 async move {
                     let (sender, receiver) = socket.split();
                     tokio::spawn(write(session_id, sender, hub, rx));
-                    tokio::spawn(read(session_id, receiver, xs, tx));
+                    tokio::spawn(read(session_id, receiver, xs, tx.clone()));
+                    tokio::spawn(async move {
+                        match abort_rc.changed().await {
+                            Ok(_) => match *abort_rc.borrow() {
+                                NotifyEnum::SUCCESS => {}
+                                _ => {
+                                    info!("handler_ssh receive abort signal");
+                                    let _ = tx.send(());
+                                }
+                            },
+                            Err(e) => {
+                                info!("handler_ssh receive abort signal error: {:?}", e);
+                            }
+                        };
+                    });
                 }
             })
         }
