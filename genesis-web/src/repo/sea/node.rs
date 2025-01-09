@@ -1,8 +1,8 @@
 //! node repo
 use crate::repo::model::node;
+use crate::repo::sea::SeaRepo;
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, DbConn, DbErr, EntityTrait, PaginatorTrait};
-use tracing::info;
+use sea_orm::{ActiveModelTrait, DbConn, DbErr, EntityTrait};
 
 pub struct NodeRepo;
 
@@ -39,11 +39,11 @@ impl NodeRepo {
     pub async fn find_node_by(
         db: &DbConn,
         pg: (u64, u64),
-    ) -> Result<(u64, Vec<node::Model>), DbErr> {
-        info!("{:?}", pg);
-        let ens = node::Entity::find().paginate(db, pg.1);
-        let count = ens.num_items().await?;
-        let res = ens.fetch_page(0).await?;
-        Ok((count, res))
+    ) -> anyhow::Result<(u64, Vec<node::Model>)> {
+        SeaRepo::page_with_default::<node::Entity>(db, pg, None).await
+    }
+
+    pub async fn node_select_kv(db: &DbConn) -> Result<Vec<node::Model>, DbErr> {
+        node::Entity::find().all(db).await
     }
 }

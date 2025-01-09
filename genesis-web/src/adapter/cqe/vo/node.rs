@@ -8,7 +8,7 @@ pub struct NodeVO {
     pub name: String,
     pub host: String,
     pub account: String,
-    pub port: u32,
+    pub port: i32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub struct NodeListItemVO {
     pub name: String,
     pub host: String,
     pub account: String,
-    pub port: u32,
+    pub port: i32,
     pub created_by: String,
     pub updated_by: String,
     pub created_at: chrono::DateTime<Local>,

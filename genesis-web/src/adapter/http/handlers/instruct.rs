@@ -5,17 +5,17 @@ use axum::{
 use genesis_common::{SshTargetPasswordAuth, TargetSSHOptions};
 use uuid::Uuid;
 
-use crate::adapter::cmd::instruct::InstructSaveCmd;
+use crate::adapter::cmd::instruct::{InstructExecuteCmd, InstructSaveCmd};
 use crate::adapter::query::instruct::InstructListQuery;
 use crate::adapter::vo::instruct::InstructVO;
 use crate::adapter::{ResList, Response, ResponseSuccess};
 use crate::repo::model::instruct;
-use crate::repo::sea::InstructRepo;
+use crate::repo::sea::{InstructRepo, NodeRepo};
 use crate::{
     config::AppState,
     error::{AppError, AppJson},
 };
-use genesis_process::{Graph, ProcessManger};
+use genesis_process::{Graph, InData, ProcessManger};
 
 pub async fn save_instruct(
     State(state): State<AppState>,
@@ -52,6 +52,7 @@ pub async fn save_instruct(
     }
     Ok(Json(ResponseSuccess::default()))
 }
+#[allow(unused)]
 pub async fn execute_instruct_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -126,6 +127,39 @@ pub async fn list_instruct(
             ))))
         })?
 }
+
+pub async fn execute_instruct(
+    State(state): State<AppState>,
+    AppJson(data): AppJson<InstructExecuteCmd>,
+) -> Result<Json<ResponseSuccess>, AppError> {
+    let in_data: InData = serde_json::from_str(
+        &InstructRepo::get_instruct_by_id(&state.conn, &data.id)
+            .await?
+            .data,
+    )?;
+    // 构建图
+    let mut graph = Graph::new();
+    graph.build_from_edges(in_data).await;
+    // 打印图的结构
+    graph.print_graph().await;
+    let execute = graph.start_node().await.unwrap();
+    let mut pm = ProcessManger { execute };
+
+    let node = NodeRepo::get_node_by_id(&state.conn, &data.node).await?;
+    let option = TargetSSHOptions {
+        host: node.host,
+        port: node.port as u16,
+        username: node.account,
+        allow_insecure_algos: Some(true),
+        auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
+            password: node.password,
+        }),
+    };
+    // 执行
+    pm.run(Uuid::new_v4(), option).await?;
+    Ok(Json(ResponseSuccess::default()))
+}
+
 #[cfg(test)]
 mod tests {
     use genesis_process::InData;

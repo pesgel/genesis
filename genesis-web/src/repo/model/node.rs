@@ -8,7 +8,7 @@ pub struct Model {
     pub id: String,
     pub name: String,
     pub host: String,
-    pub port: u32,
+    pub port: i32,
     pub account: String,
     pub password: String,
     pub created_by: String,

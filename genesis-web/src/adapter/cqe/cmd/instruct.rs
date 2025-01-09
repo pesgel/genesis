@@ -12,3 +12,11 @@ pub struct InstructSaveCmd {
     pub name: String,
     pub data: InData,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")] // 使用驼峰命名格式
+pub struct InstructExecuteCmd {
+    pub id: String,
+    pub name: String,
+    pub node: String,
+}

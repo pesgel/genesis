@@ -1,6 +1,7 @@
 use crate::adapter::cmd::node::NodeSaveCmd;
 use crate::adapter::query::node::NodeListQuery;
 use crate::adapter::vo::node::{NodeListItemVO, NodeVO};
+use crate::adapter::vo::BaseKV;
 use crate::adapter::{ResList, Response, ResponseSuccess};
 use crate::config::AppState;
 use crate::error::{AppError, AppJson};
@@ -84,4 +85,20 @@ pub async fn list_node(
                     .collect(),
             ))))
         })?
+}
+// BaseKV
+
+pub async fn node_select_kv_item(
+    State(state): State<AppState>,
+) -> Result<Json<Response<Vec<BaseKV>>>, AppError> {
+    NodeRepo::node_select_kv(&state.conn).await.map(|list| {
+        Ok(Json(Response::new_success(
+            list.into_iter()
+                .map(|d| BaseKV {
+                    key: d.id,
+                    value: d.name,
+                })
+                .collect(),
+        )))
+    })?
 }

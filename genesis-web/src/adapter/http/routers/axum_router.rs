@@ -25,13 +25,14 @@ pub async fn routes(state: AppState) -> Router {
                 .route("/", post(save_instruct))
                 .route("/:id", get(get_instruct_by_id))
                 .route("/list", post(list_instruct))
-                .route("/execute/:id", post(execute_instruct_by_id)),
+                .route("/execute", post(execute_instruct)),
         )
         .nest(
             "/node",
             Router::new()
                 .route("/", post(save_node))
                 .route("/:id", get(get_node_by_id))
+                .route("/kv", get(node_select_kv_item))
                 .route("/list", post(list_node)),
         )
         .nest("/user", Router::new().route("/info", get(user_info)))
