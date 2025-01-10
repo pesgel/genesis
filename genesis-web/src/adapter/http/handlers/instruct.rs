@@ -65,7 +65,7 @@ pub async fn execute_instruct_by_id(
     // 打印图的结构
     graph.print_graph().await;
     let execute = graph.start_node().await.unwrap();
-    let mut pm = ProcessManger { execute };
+    let mut pm = ProcessManger::new("".to_string(), execute);
     // TODO 获取数据库数据
     // let new_password = "%]m73MmQ";
     // let old_password = "#wR61V(s";
@@ -132,19 +132,17 @@ pub async fn execute_instruct(
     State(state): State<AppState>,
     AppJson(data): AppJson<InstructExecuteCmd>,
 ) -> Result<Json<ResponseSuccess>, AppError> {
+    // step1. fetch instruct data
     let in_data: InData = serde_json::from_str(
         &InstructRepo::get_instruct_by_id(&state.conn, &data.id)
             .await?
             .data,
     )?;
-    // 构建图
+    // step2. build graph
     let mut graph = Graph::new();
     graph.build_from_edges(in_data).await;
-    // 打印图的结构
-    graph.print_graph().await;
     let execute = graph.start_node().await.unwrap();
-    let mut pm = ProcessManger { execute };
-
+    // step3. set ssh options
     let node = NodeRepo::get_node_by_id(&state.conn, &data.node).await?;
     let option = TargetSSHOptions {
         host: node.host,
@@ -155,7 +153,9 @@ pub async fn execute_instruct(
             password: node.password,
         }),
     };
-    // 执行
+    // step4. execute
+    let execute_uniq_id = Uuid::new_v4().to_string();
+    let mut pm = ProcessManger::new(execute_uniq_id, execute);
     pm.run(Uuid::new_v4(), option).await?;
     Ok(Json(ResponseSuccess::default()))
 }

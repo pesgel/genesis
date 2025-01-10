@@ -2,10 +2,10 @@
 
 mod instruct;
 mod process;
+mod types;
 
 pub use instruct::*;
 pub use process::*;
-
 #[cfg(test)]
 mod tests {
 

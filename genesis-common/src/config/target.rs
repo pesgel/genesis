@@ -1,6 +1,6 @@
 use super::defaults::*;
 use serde::{Deserialize, Serialize};
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct TargetSSHOptions {
     pub host: String,
     #[serde(default = "_default_ssh_port")]

@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use validator::Validate;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")] // 使用驼峰命名格式
+#[serde(rename_all = "camelCase")]
 pub enum PreMatchTypeEnum {
     Eq,
     Reg,
@@ -16,7 +16,7 @@ pub enum PreMatchTypeEnum {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")] // 使用驼峰命名格式
+#[serde(rename_all = "camelCase")]
 pub struct Item {
     pub value: String,
     pub match_type: PreMatchTypeEnum,
@@ -56,9 +56,9 @@ pub struct Edge {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct InData {
-    #[validate(length(min = 1, message = "节点数据不能为空"))]
+    #[validate(length(min = 1, message = "nodes is empty"))]
     pub nodes: Vec<Node>,
-    #[validate(length(min = 1, message = "关系数据不能为空"))]
+    #[validate(length(min = 1, message = "edges is empty"))]
     pub edges: Vec<Edge>,
 }
 
