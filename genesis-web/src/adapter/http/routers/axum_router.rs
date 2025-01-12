@@ -1,15 +1,13 @@
 use axum::{
     middleware,
     routing::{get, post},
-    Router,
+    Json, Router,
 };
+use serde_json::json;
 
 use crate::adapter::http::handlers::*;
 use crate::adapter::http::middleware::auth::jwt_auth_middle;
-use crate::{
-    adapter::http::{handler_ssh, handlers::get_instruct_by_id},
-    config::AppState,
-};
+use crate::{adapter::http::handler_ssh, config::AppState};
 
 pub async fn routes(state: AppState) -> Router {
     let open_route = Router::new()
@@ -35,6 +33,13 @@ pub async fn routes(state: AppState) -> Router {
                 .route("/kv", get(node_select_kv_item))
                 .route("/list", post(list_node)),
         )
+        .nest(
+            "/execute",
+            Router::new()
+                .route("/:id", get(get_execute_by_id))
+                .route("/stop/:id", get(stop_execute_by_id))
+                .route("/list", post(list_execute)),
+        )
         .nest("/user", Router::new().route("/info", get(user_info)))
         .layer(middleware::from_fn(jwt_auth_middle));
 
@@ -44,6 +49,10 @@ pub async fn routes(state: AppState) -> Router {
 }
 
 // 处理函数
-async fn hello() -> &'static str {
-    "Hello, World!"
+async fn hello() -> Json<serde_json::Value> {
+    Json(json!({
+        "version": "v0.0.1",
+        "status": "running",
+        "time": chrono::Local::now().to_string()
+    }))
 }

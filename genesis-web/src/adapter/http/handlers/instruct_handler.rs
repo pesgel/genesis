@@ -3,14 +3,18 @@ use axum::{
     Json,
 };
 use genesis_common::{SshTargetPasswordAuth, TargetSSHOptions};
+use tracing::error;
 use uuid::Uuid;
 
 use crate::adapter::cmd::instruct::{InstructExecuteCmd, InstructSaveCmd};
 use crate::adapter::query::instruct::InstructListQuery;
 use crate::adapter::vo::instruct::InstructVO;
 use crate::adapter::{ResList, Response, ResponseSuccess};
+use crate::common::TaskStatusEnum;
+use crate::config::EXECUTE_MAP_MANAGER;
+use crate::repo::model;
 use crate::repo::model::instruct;
-use crate::repo::sea::{InstructRepo, NodeRepo};
+use crate::repo::sea::{ExecuteRepo, InstructRepo, NodeRepo};
 use crate::{
     config::AppState,
     error::{AppError, AppJson},
@@ -20,7 +24,7 @@ use genesis_process::{Graph, InData, ProcessManger};
 pub async fn save_instruct(
     State(state): State<AppState>,
     AppJson(data): AppJson<InstructSaveCmd>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<Json<Response<String>>, AppError> {
     let str = serde_json::to_string(&data.data)?;
     let mut model = instruct::Model::new();
     model.data = str;
@@ -28,60 +32,9 @@ pub async fn save_instruct(
     if let Some(des) = data.des {
         model.des = des;
     }
-    // 判断新增,还是编辑
-    let mut is_add = false;
-    // 设置主键
-    model.id = data
-        .id
-        .filter(|e| {
-            if e.is_empty() {
-                is_add = true;
-                false
-            } else {
-                true
-            }
-        })
-        .unwrap_or_else(|| {
-            is_add = true;
-            Uuid::new_v4().to_string()
-        });
-    if is_add {
-        InstructRepo::insert_instruct_one(&state.conn, model.into()).await?;
-    } else {
-        InstructRepo::update_instruct_by_id(&state.conn, model).await?;
-    }
-    Ok(Json(ResponseSuccess::default()))
-}
-#[allow(unused)]
-pub async fn execute_instruct_by_id(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ResponseSuccess>, AppError> {
-    let en = InstructRepo::get_instruct_by_id(&state.conn, &id).await?;
-    let data: InstructSaveCmd = serde_json::from_str(&en.data)?;
-    // 构建图
-    let mut graph = Graph::new();
-    graph.build_from_edges(data.data).await;
-    // 打印图的结构
-    graph.print_graph().await;
-    let execute = graph.start_node().await.unwrap();
-    let mut pm = ProcessManger::new("".to_string(), execute);
-    // TODO 获取数据库数据
-    // let new_password = "%]m73MmQ";
-    // let old_password = "#wR61V(s";
-    // TODO 敏感信息排除
-    let option = TargetSSHOptions {
-        host: "127.0.0.1".into(),
-        port: 32222,
-        username: "root".into(),
-        allow_insecure_algos: Some(true),
-        auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
-            password: "123456".to_string(),
-        }),
-    };
-    // 执行
-    pm.run(Uuid::new_v4(), option).await?;
-    Ok(Json(ResponseSuccess::default()))
+    InstructRepo::save_instruct(&state.conn, model)
+        .await
+        .map(|id| Ok(Json(Response::new_success(id))))?
 }
 pub async fn get_instruct_by_id(
     State(state): State<AppState>,
@@ -133,11 +86,8 @@ pub async fn execute_instruct(
     AppJson(data): AppJson<InstructExecuteCmd>,
 ) -> Result<Json<ResponseSuccess>, AppError> {
     // step1. fetch instruct data
-    let in_data: InData = serde_json::from_str(
-        &InstructRepo::get_instruct_by_id(&state.conn, &data.id)
-            .await?
-            .data,
-    )?;
+    let ins = InstructRepo::get_instruct_by_id(&state.conn, &data.id).await?;
+    let in_data: InData = serde_json::from_str(&ins.data)?;
     // step2. build graph
     let mut graph = Graph::new();
     graph.build_from_edges(in_data).await;
@@ -153,11 +103,85 @@ pub async fn execute_instruct(
             password: node.password,
         }),
     };
-    // step4. execute
+    // step4. insert execute data
     let execute_uniq_id = Uuid::new_v4().to_string();
-    let mut pm = ProcessManger::new(execute_uniq_id, execute);
-    pm.run(Uuid::new_v4(), option).await?;
+    let mut model = model::execute::Model::new();
+    model.id = execute_uniq_id.clone();
+    model.name = data.name.clone();
+    model.state = TaskStatusEnum::Init as i32;
+    model.instruct_id = data.id;
+    model.instruct_name = ins.name;
+    model.node_id = data.node;
+    model.node_name = node.name;
+    let uuid = ExecuteRepo::insert_execute_one(&state.conn, model).await?;
+    // step4. execute
+    let mut pm = ProcessManger::new(execute_uniq_id.clone(), execute);
+    let abort_sc = pm.get_abort_sc();
+    tokio::spawn(async move {
+        let mut status = TaskStatusEnum::Success;
+        let mut remark = String::new();
+        match pm.run(Uuid::new_v4(), option).await {
+            Ok(_) => {}
+            Err(e) => {
+                status = TaskStatusEnum::ManualStop;
+                remark = e.to_string();
+            }
+        }
+        let mut update_model = model::execute::Model::new();
+        update_model.id = uuid;
+        update_model.state = status as i32;
+        update_model.remark = remark;
+        let res = ExecuteRepo::update_execute_state(&state.conn, update_model).await;
+        match res {
+            Ok(_) => {}
+            Err(e) => {
+                error!("update state error: {:?}", e)
+            }
+        }
+    });
+    // step5. register global manager
+    EXECUTE_MAP_MANAGER
+        .write()
+        .await
+        .insert(execute_uniq_id, abort_sc);
     Ok(Json(ResponseSuccess::default()))
+}
+
+/// stop execute task
+pub async fn stop_execute_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ResponseSuccess>, AppError> {
+    let res = match EXECUTE_MAP_MANAGER.read().await.get(&id) {
+        None => Err(AppError::MsgError(
+            "execute task is not running".to_string(),
+        )),
+        Some(value) => match value.send(true).map_err(|e| anyhow::anyhow!(e)) {
+            Ok(_) => {
+                //EXECUTE_MAP_MANAGER.write().await.remove(&id);
+                Ok(Json(ResponseSuccess::default()))
+            }
+            Err(e) => stop_execute_callback(&state, id.clone(), e.to_string()).await,
+        },
+    }?;
+    EXECUTE_MAP_MANAGER.write().await.remove(&id);
+    Ok(res)
+}
+
+async fn stop_execute_callback(
+    state: &AppState,
+    id: String,
+    e: String,
+) -> Result<Json<ResponseSuccess>, AppError> {
+    let mut update_model = model::execute::Model::new();
+    update_model.id = id;
+    update_model.state = TaskStatusEnum::Error as i32;
+    update_model.remark = e;
+    let res = ExecuteRepo::update_execute_state(&state.conn, update_model).await;
+    match res {
+        Ok(_) => Ok(Json(ResponseSuccess::default())),
+        Err(e) => Err(AppError::MsgError(e.to_string())),
+    }
 }
 
 #[cfg(test)]

@@ -2,48 +2,27 @@ use crate::adapter::cmd::node::NodeSaveCmd;
 use crate::adapter::query::node::NodeListQuery;
 use crate::adapter::vo::node::{NodeListItemVO, NodeVO};
 use crate::adapter::vo::BaseKV;
-use crate::adapter::{ResList, Response, ResponseSuccess};
+use crate::adapter::{ResList, Response};
 use crate::config::AppState;
 use crate::error::{AppError, AppJson};
 use crate::repo::model::node;
 use crate::repo::sea::NodeRepo;
 use axum::extract::{Path, State};
 use axum::Json;
-use uuid::Uuid;
 
 pub async fn save_node(
     State(state): State<AppState>,
     AppJson(param): AppJson<NodeSaveCmd>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<Json<Response<String>>, AppError> {
     let mut model = node::Model::new();
     model.name = param.name;
     model.host = param.host;
     model.port = param.port;
     model.account = param.account;
     model.password = param.password;
-    // 判断新增,还是编辑
-    let mut is_add = false;
-    // 设置主键
-    model.id = param
-        .id
-        .filter(|e| {
-            if e.is_empty() {
-                is_add = true;
-                false
-            } else {
-                true
-            }
-        })
-        .unwrap_or_else(|| {
-            is_add = true;
-            Uuid::new_v4().to_string()
-        });
-    if is_add {
-        NodeRepo::insert_node_one(&state.conn, model.into()).await?;
-    } else {
-        NodeRepo::update_node_by_id(&state.conn, model).await?;
-    }
-    Ok(Json(ResponseSuccess::default()))
+    NodeRepo::save_node(&state.conn, model)
+        .await
+        .map(|id| Ok(Json(Response::new_success(id))))?
 }
 
 pub async fn get_node_by_id(

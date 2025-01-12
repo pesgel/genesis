@@ -502,9 +502,15 @@ impl ProcessManger {
             }
         });
         let _ = tokio::join!(a);
-        let _ = self.abort_sc.send(true);
-        info!("end execute:{}", self.uniq_id);
-        anyhow::Ok(())
+        // stop type check
+        let old = self.abort_rc.clone();
+        if *old.borrow() {
+            anyhow::bail!("outer stop")
+        } else {
+            let _ = self.abort_sc.send(true);
+            info!("end execute:{}", self.uniq_id);
+            anyhow::Ok(())
+        }
     }
 }
 

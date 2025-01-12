@@ -11,9 +11,11 @@ use sea_orm::{Iterable, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
+mod execute;
 mod node;
 mod user;
 
+pub use execute::*;
 pub use node::*;
 pub use user::*;
 pub(crate) struct SeaRepo;
@@ -55,16 +57,12 @@ impl SeaRepo {
         <E as EntityTrait>::ActiveModel: Send,
     {
         E::Column::iter().for_each(|e| {
-            if FIELD_UPDATED_AT == e.as_str() && model.get(e).is_not_set() {
-                model.set(
-                    e,
-                    Value::ChronoDateTimeLocal(Some(Box::new(default_time()))),
-                )
+            if e.as_str() == FIELD_UPDATED_AT {
+                Self::set_now_time::<E>(&mut model, e)
             }
         });
         anyhow::Ok(model.update(db).await?)
     }
-
     /// Inserts an ActiveModel instance into the database.
     #[allow(dead_code)]
     pub async fn insert_with_default<E, D>(db: &DbConn, data: D) -> anyhow::Result<String>
@@ -80,7 +78,14 @@ impl SeaRepo {
         E::Column::iter().for_each(|e| match e.as_str() {
             FIELD_ID => match model.get(e) {
                 ActiveValue::Set(value) => {
-                    id = value.to_string();
+                    if let Value::String(Some(now_id)) = value {
+                        if now_id.is_empty() {
+                            id = default_id();
+                            model.set(e, Value::String(Some(Box::new(id.clone()))))
+                        } else {
+                            id = *now_id;
+                        }
+                    }
                 }
                 ActiveValue::Unchanged(value) => {
                     id = value.to_string();
@@ -90,14 +95,7 @@ impl SeaRepo {
                     model.set(e, Value::String(Some(Box::new(id.clone()))))
                 }
             },
-            FIELD_CREATED_AT | FIELD_UPDATED_AT => {
-                if model.get(e).is_not_set() {
-                    model.set(
-                        e,
-                        Value::ChronoDateTimeLocal(Some(Box::new(default_time()))),
-                    )
-                }
-            }
+            FIELD_CREATED_AT | FIELD_UPDATED_AT => Self::set_now_time::<E>(&mut model, e),
             _ => {}
         });
         match model.insert(db).await {
@@ -119,6 +117,29 @@ impl SeaRepo {
         let vl = serde_json::to_value(data)?;
         let data: E::Model = serde_json::from_value(vl)?;
         anyhow::Ok(data)
+    }
+
+    fn set_now_time<A>(model: &mut <A as EntityTrait>::ActiveModel, e: <A as EntityTrait>::Column)
+    where
+        A: EntityTrait,
+    {
+        match model.get(e) {
+            ActiveValue::Set(v) => {
+                if let Some(vv) = v.as_ref_chrono_date_time_local() {
+                    if vv.eq(&chrono::DateTime::<Local>::default()) {
+                        model.set(
+                            e,
+                            Value::ChronoDateTimeLocal(Some(Box::new(default_time()))),
+                        )
+                    }
+                }
+            }
+            ActiveValue::Unchanged(_) => {}
+            ActiveValue::NotSet => model.set(
+                e,
+                Value::ChronoDateTimeLocal(Some(Box::new(default_time()))),
+            ),
+        }
     }
 }
 
@@ -201,7 +222,7 @@ mod tests {
             des: "123123".to_string(),
             ..Default::default()
         };
-        let x = instruct::InstructRepo::insert_instruct_one(&state.conn, new_instruct.into()).await;
+        let x = instruct::InstructRepo::insert_instruct_one(&state.conn, new_instruct).await;
         match x {
             Ok(inserted_record) => {
                 println!("Record inserted: {:?}", inserted_record);

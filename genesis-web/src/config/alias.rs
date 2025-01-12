@@ -3,11 +3,14 @@
 use super::AppConfig;
 use lazy_static::lazy_static;
 use sea_orm::{Database, DatabaseConnection};
-use tokio::sync::RwLock;
+use std::collections::HashMap;
+use tokio::sync::{watch, RwLock};
 
 lazy_static! {
     pub static ref SHARED_APP_STATE: RwLock<AppState> = RwLock::new(AppState::default());
     pub static ref SHARED_APP_CONFIG: RwLock<AppConfig> = RwLock::new(AppConfig::default());
+    pub static ref EXECUTE_MAP_MANAGER: RwLock<HashMap<String, watch::Sender<bool>>> =
+        RwLock::new(HashMap::new());
 }
 
 #[derive(Debug, Clone, Default)]

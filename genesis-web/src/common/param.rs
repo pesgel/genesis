@@ -12,6 +12,8 @@ pub struct Envelope {
 pub struct PageQuery {
     page: u64,
     size: u64,
+    sort: Option<String>,
+    sort_by: Option<String>,
 }
 impl PageQuery {
     pub fn init(&self) -> (u64, u64) {

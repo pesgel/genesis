@@ -2,13 +2,22 @@
 use crate::repo::model::node;
 use crate::repo::sea::SeaRepo;
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, DbConn, DbErr, EntityTrait};
+use sea_orm::{DbConn, DbErr, EntityTrait};
 
 pub struct NodeRepo;
 
 impl NodeRepo {
-    pub async fn update_node_by_id(db: &DbConn, model: node::Model) -> Result<node::Model, DbErr> {
-        node::ActiveModel {
+    pub async fn save_node(db: &DbConn, model: node::Model) -> anyhow::Result<String> {
+        if model.id.is_empty() {
+            NodeRepo::insert_node_one(db, model).await
+        } else {
+            NodeRepo::update_node_by_id(db, model)
+                .await
+                .map(|data| anyhow::Ok(data.id))?
+        }
+    }
+    pub async fn update_node_by_id(db: &DbConn, model: node::Model) -> anyhow::Result<node::Model> {
+        let active_model = node::ActiveModel {
             id: Set(model.id),
             name: Set(model.name),
             host: Set(model.host),
@@ -16,18 +25,12 @@ impl NodeRepo {
             port: Set(model.port),
             account: Set(model.account),
             ..Default::default()
-        }
-        .update(db)
-        .await
+        };
+        SeaRepo::update_with_default::<node::Entity>(db, active_model).await
     }
 
-    pub async fn insert_node_one(db: &DbConn, data: node::ActiveModel) -> Result<(), DbErr> {
-        let res = node::Entity::insert(data).exec(db).await;
-        match res {
-            Ok(_) => Ok(()),
-            Err(DbErr::RecordNotInserted) => Ok(()),
-            Err(e) => Err(e),
-        }
+    pub async fn insert_node_one(db: &DbConn, data: node::Model) -> anyhow::Result<String> {
+        SeaRepo::insert_with_default::<node::Entity, _>(db, data).await
     }
     pub async fn get_node_by_id(db: &DbConn, id: &str) -> Result<node::Model, DbErr> {
         node::Entity::find_by_id(id)
