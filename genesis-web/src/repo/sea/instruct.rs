@@ -1,6 +1,7 @@
 //! instruct repo
 use crate::repo::model::instruct;
 use crate::repo::sea::SeaRepo;
+use sea_orm::sea_query::ConditionExpression;
 use sea_orm::ActiveValue::Set;
 use sea_orm::{DbConn, DbErr, EntityTrait};
 
@@ -43,7 +44,8 @@ impl InstructRepo {
     pub async fn find_instruct_by(
         db: &DbConn,
         pg: (u64, u64),
+        ces: Option<Vec<ConditionExpression>>,
     ) -> anyhow::Result<(u64, Vec<instruct::Model>)> {
-        SeaRepo::page_with_default::<instruct::Entity>(db, pg, None).await
+        SeaRepo::page_with_default::<instruct::Entity>(db, pg, ces).await
     }
 }

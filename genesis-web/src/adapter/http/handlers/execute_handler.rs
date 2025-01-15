@@ -3,9 +3,12 @@ use crate::adapter::vo::execute::{ExecuteListItemVO, ExecuteVO};
 use crate::adapter::{ResList, Response};
 use crate::config::AppState;
 use crate::error::AppError;
+use crate::repo::model::execute;
 use crate::repo::sea::ExecuteRepo;
 use axum::extract::{Path, State};
 use axum::Json;
+use sea_orm::sea_query::ConditionExpression;
+use sea_orm::{ColumnTrait, Condition};
 
 pub async fn get_execute_by_id(
     State(state): State<AppState>,
@@ -30,7 +33,15 @@ pub async fn list_execute(
     State(state): State<AppState>,
     Json(query): Json<ExecuteListQuery>,
 ) -> Result<Json<Response<ResList<ExecuteListItemVO>>>, AppError> {
-    ExecuteRepo::find_execute_by(&state.conn, query.page_query.init())
+    let mut search_option = Vec::new();
+    if let Some(name) = query.name {
+        if !name.is_empty() {
+            search_option.push(ConditionExpression::Condition(
+                Condition::all().add(execute::Column::Name.contains(name)),
+            ))
+        }
+    }
+    ExecuteRepo::find_execute_by(&state.conn, query.page_query.init(), Some(search_option))
         .await
         .map(|list| {
             Ok(Json(Response::new_success(ResList::new(

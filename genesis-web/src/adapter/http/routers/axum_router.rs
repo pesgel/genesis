@@ -1,3 +1,4 @@
+use axum::routing::delete;
 use axum::{
     middleware,
     routing::{get, post},
@@ -30,6 +31,7 @@ pub async fn routes(state: AppState) -> Router {
             Router::new()
                 .route("/", post(save_node))
                 .route("/:id", get(get_node_by_id))
+                .route("/:id", delete(delete_node_by_id))
                 .route("/kv", get(node_select_kv_item))
                 .route("/list", post(list_node)),
         )

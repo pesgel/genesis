@@ -3,6 +3,8 @@ use axum::{
     Json,
 };
 use genesis_common::{SshTargetPasswordAuth, TargetSSHOptions};
+use sea_orm::sea_query::ConditionExpression;
+use sea_orm::{ColumnTrait, Condition};
 use tracing::error;
 use uuid::Uuid;
 
@@ -59,7 +61,15 @@ pub async fn list_instruct(
     State(state): State<AppState>,
     Json(query): Json<InstructListQuery>,
 ) -> Result<Json<Response<ResList<InstructVO>>>, AppError> {
-    InstructRepo::find_instruct_by(&state.conn, query.page_query.init())
+    let mut search_option = Vec::new();
+    if let Some(name) = query.name {
+        if !name.is_empty() {
+            search_option.push(ConditionExpression::Condition(
+                Condition::all().add(instruct::Column::Name.contains(name)),
+            ))
+        }
+    }
+    InstructRepo::find_instruct_by(&state.conn, query.page_query.init(), Some(search_option))
         .await
         .map(|list| {
             Ok(Json(Response::new_success(ResList::new(
