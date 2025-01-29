@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::adapter::cmd::instruct::{InstructExecuteCmd, InstructSaveCmd};
 use crate::adapter::query::instruct::InstructListQuery;
 use crate::adapter::vo::instruct::InstructVO;
-use crate::adapter::{ResList, Response, ResponseSuccess};
+use crate::adapter::{ExecuteReplaceItem, ResList, Response, ResponseSuccess};
 use crate::common::TaskStatusEnum;
 use crate::config::EXECUTE_MAP_MANAGER;
 use crate::repo::model;
@@ -91,17 +91,28 @@ pub async fn list_instruct(
         })?
 }
 
+pub async fn replace_execute_param(
+    mut old_str: String,
+    rep: Vec<ExecuteReplaceItem>,
+) -> anyhow::Result<String> {
+    rep.into_iter()
+        .for_each(|item| old_str = old_str.replace(&item.mark, &item.value));
+    anyhow::Ok(old_str)
+}
+
 pub async fn execute_instruct(
     State(state): State<AppState>,
     AppJson(data): AppJson<InstructExecuteCmd>,
 ) -> Result<Json<ResponseSuccess>, AppError> {
     // step1. fetch instruct data
     let ins = InstructRepo::get_instruct_by_id(&state.conn, &data.id).await?;
-    let in_data: InData = serde_json::from_str(&ins.data)?;
+    // replace param
+    let new_str = replace_execute_param(ins.data, data.replaces).await?;
+    let in_data: InData = serde_json::from_str(&new_str)?;
     // step2. build graph
     let mut graph = Graph::new();
     graph.build_from_edges(in_data).await;
-    let execute = graph.start_node().await.unwrap();
+    let execute = graph.start_node().await?;
     // step3. set ssh options
     let node = NodeRepo::get_node_by_id(&state.conn, &data.node).await?;
     let option = TargetSSHOptions {
@@ -163,9 +174,17 @@ pub async fn stop_execute_by_id(
     Path(id): Path<String>,
 ) -> Result<Json<ResponseSuccess>, AppError> {
     let res = match EXECUTE_MAP_MANAGER.read().await.get(&id) {
-        None => Err(AppError::MsgError(
-            "execute task is not running".to_string(),
-        )),
+        None => {
+            let _ = stop_execute_callback(
+                &state,
+                id.clone(),
+                "execute task is not running".to_string(),
+            )
+            .await?;
+            Err(AppError::MsgError(
+                "execute task is not running".to_string(),
+            ))
+        }
         Some(value) => match value.send(true).map_err(|e| anyhow::anyhow!(e)) {
             Ok(_) => {
                 //EXECUTE_MAP_MANAGER.write().await.remove(&id);

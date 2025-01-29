@@ -1,5 +1,6 @@
 //! instruct
 
+use crate::adapter::ExecuteReplaceItem;
 use genesis_process::InData;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -19,4 +20,5 @@ pub struct InstructExecuteCmd {
     pub id: String,
     pub name: String,
     pub node: String,
+    pub replaces: Vec<ExecuteReplaceItem>,
 }

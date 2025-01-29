@@ -132,10 +132,11 @@ impl Graph {
             let node_ref = node.lock().await;
             // 打印当前节点信息
             println!(
-                "{}Node ID: {}, Description: {}",
+                "{}Node ID: {}, Description: {} Cmd: {}",
                 "  ".repeat(level),
                 node_ref.node.id,
-                node_ref.node.core.des
+                node_ref.node.core.des,
+                node_ref.node.core.cmd
             );
             // 递归打印子节点
             for child in &node_ref.children {

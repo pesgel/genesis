@@ -1,4 +1,5 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use validator::Validate;
 
 pub mod cmd;
 pub mod query;
@@ -66,4 +67,15 @@ where
             data: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteReplaceItem {
+    #[validate(length(min = 1, message = "execute replace item value is empty"))]
+    pub value: String,
+    #[validate(length(min = 1, message = "execute replace item mark is empty"))]
+    pub mark: String,
+    #[validate(length(min = 1, message = "execute replace item replace type is empty"))]
+    pub replace_type: String,
 }
