@@ -1,13 +1,14 @@
 //! process
 
+use bytes::{Bytes, BytesMut};
+use genesis_common::{EventSubscription, NotifyEnum, TargetSSHOptions};
+use genesis_ssh::start_ssh_connect;
+use std::io::Write;
 use std::iter::once;
 use std::{sync::Arc, time::Duration};
-
-use bytes::{Bytes, BytesMut};
-use genesis_common::{NotifyEnum, TargetSSHOptions};
-use genesis_ssh::start_ssh_connect;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::watch::Receiver;
 use tokio::{
     select,
     sync::{mpsc::unbounded_channel, watch, Mutex, RwLock},
@@ -15,6 +16,7 @@ use tokio::{
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::recording::Recorder;
 use crate::{Execute, PreMatchTypeEnum};
 
 #[derive(Clone, Default)]
@@ -70,7 +72,7 @@ impl PipeManger {
         mut in_io: Pipe,
         mut out_io: Pipe,
         state_sender: broadcast::Sender<ExecuteState>,
-        abort_rc: &watch::Receiver<bool>,
+        abort_rc: &Receiver<bool>,
     ) -> Result<(), String> {
         let mut abort_in_io: watch::Receiver<bool> = abort_rc.clone();
         // step1. receive in data
@@ -271,6 +273,7 @@ pub enum ExecuteState {
 
 pub struct ProcessManger {
     abort_sc: watch::Sender<bool>,
+    recorder: Arc<Mutex<Option<Recorder>>>,
     pub uniq_id: String,
     pub ssh_cmd_wait_times: u8,
     pub execute: Arc<Mutex<Execute>>,
@@ -280,10 +283,10 @@ pub struct ProcessManger {
 }
 
 impl ProcessManger {
-    pub fn new(uniq_id: String, execute: Arc<Mutex<Execute>>) -> ProcessManger {
+    pub fn new(uniq_id: String, execute: Arc<Mutex<Execute>>) -> anyhow::Result<ProcessManger> {
         let (abort_sc, abort_rc) = watch::channel(false);
         let (broadcast_sender, broadcast_receiver) = broadcast::channel::<ExecuteState>(2048);
-        Self {
+        anyhow::Ok(Self {
             uniq_id,
             execute,
             abort_rc,
@@ -291,7 +294,8 @@ impl ProcessManger {
             broadcast_receiver,
             abort_sc,
             ssh_cmd_wait_times: 100,
-        }
+            recorder: Arc::new(Mutex::new(None)),
+        })
     }
     pub fn with_ssh_cmd_wait_times(&mut self, times: u8) -> &mut Self {
         self.ssh_cmd_wait_times = times;
@@ -330,6 +334,41 @@ impl ProcessManger {
 }
 
 impl ProcessManger {
+    pub async fn do_recording(&mut self, recv: EventSubscription<Bytes>) {
+        let mut abort_tx: watch::Receiver<bool> = self.abort_rc.clone();
+        let mut receiver = recv.unbox();
+        if let Some(mut recorder) = self.recorder.lock().await.take() {
+            loop {
+                select! {
+                    flag = abort_tx.changed() => match flag {
+                            Ok(_) => {
+                                if *abort_tx.borrow() {
+                                    info!("do_recording receive abort signal");
+                                    break ;
+                                }
+                            },
+                            Err(e) => {
+                                info!("do_recording receive abort signal error: {:?}",e);
+                                break ;
+                            },
+                        },
+                    rb = receiver.recv() => match rb {
+                        None  => {},
+                        Some(bytes)=> {
+                            match recorder.write_all(bytes.as_ref()) {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!("do_recording write error: {:?}",e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            recorder.close();
+        }
+    }
     #[allow(dead_code)]
     pub async fn run(&mut self, uuid: Uuid, ssh_option: TargetSSHOptions) -> anyhow::Result<()> {
         let (hub, sender, notify) = start_ssh_connect(uuid, ssh_option).await?;
@@ -501,7 +540,17 @@ impl ProcessManger {
                 }
             }
         });
-        let _ = tokio::join!(a);
+        // wait execute
+        // start recording
+        // TODO SSH Term Param
+        self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
+            &self.uniq_id,
+            "./",
+            "",
+            1,
+            1,
+        )?)));
+        let _ = tokio::join!(a, self.do_recording(hub.subscribe(|_| true).await));
         // stop type check
         let old = self.abort_rc.clone();
         if *old.borrow() {
@@ -710,7 +759,7 @@ mod tests {
         // graph.print_graph().await;
         let execute = graph.start_node().await.unwrap();
 
-        let mut pm = ProcessManger::new("".to_string(), execute);
+        let mut pm = ProcessManger::new("".to_string(), execute).unwrap();
 
         let option = TargetSSHOptions::default();
         let _ = pm.run(Uuid::new_v4(), option).await;

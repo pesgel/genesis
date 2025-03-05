@@ -650,7 +650,8 @@ pub async fn start_ssh_connect(
         while let Some(e) = handle.event_rx.recv().await {
             match e {
                 RCEvent::Output(_, bytes) => {
-                    let _ = sender.send_once(bytes).await;
+                    //let _ = sender.send_once(bytes).await;
+                    let _ = sender.send_all(bytes).await;
                 }
                 RCEvent::ConnectionError(e) => {
                     error!("connection error:{:?}", e);

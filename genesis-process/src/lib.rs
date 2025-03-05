@@ -2,6 +2,7 @@
 
 mod instruct;
 mod process;
+mod recording;
 mod types;
 
 pub use instruct::*;
