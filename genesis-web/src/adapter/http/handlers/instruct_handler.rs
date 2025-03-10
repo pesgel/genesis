@@ -16,7 +16,7 @@ use crate::common::TaskStatusEnum;
 use crate::config::EXECUTE_MAP_MANAGER;
 use crate::repo::model;
 use crate::repo::model::instruct;
-use crate::repo::sea::{ExecuteRepo, InstructRepo, NodeRepo};
+use crate::repo::sea::{ExecuteRepo, InstructRepo, NodeRepo, SeaRepo};
 use crate::{
     config::AppState,
     error::{AppError, AppJson},
@@ -33,6 +33,9 @@ pub async fn save_instruct(
     model.name = data.name;
     if let Some(des) = data.des {
         model.des = des;
+    }
+    if let Some(id) = data.id {
+        model.id = id;
     }
     InstructRepo::save_instruct(&state.conn, model)
         .await
@@ -213,17 +216,11 @@ async fn stop_execute_callback(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use genesis_process::InData;
-
-    #[test]
-    fn test() {
-        let json = r#"{"nodes":[{"id":"1","core":{"des":"打印地址","cmd":"pwd"}},{"id":"2","pre":{"list":[{"value":"/home/yangping","match_type":"contains"}]},"core":{"des":"退出","cmd":"exit"}}],"edges":[{"source":"1","target":"2"}]}"#;
-        let parsed: Result<InData, _> = serde_json::from_str(json);
-        match parsed {
-            Ok(data) => println!("Deserialized successfully: {:?}", data),
-            Err(e) => eprintln!("Deserialization failed: {:?}", e),
-        }
-    }
+pub async fn delete_instruct_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ResponseSuccess>, AppError> {
+    SeaRepo::delete_by_id::<instruct::Entity>(&state.conn, &id)
+        .await
+        .map(|_| Ok(Json(ResponseSuccess::default())))?
 }

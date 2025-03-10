@@ -22,6 +22,9 @@ pub async fn save_node(
     model.port = param.port;
     model.account = param.account;
     model.password = param.password;
+    if let Some(id) = param.id {
+        model.id = id;
+    }
     NodeRepo::save_node(&state.conn, model)
         .await
         .map(|id| Ok(Json(Response::new_success(id))))?

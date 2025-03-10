@@ -5,11 +5,11 @@ pub use instruct::*;
 use sea_orm::sea_query::ConditionExpression;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DbConn, DbErr, EntityTrait, IdenStatic,
-    IntoActiveModel, PaginatorTrait, PrimaryKeyTrait, Select, SelectModel, Value,
+    IntoActiveModel, Order, PaginatorTrait, PrimaryKeyTrait, QueryOrder, Select, SelectModel,
+    Value,
 };
 use sea_orm::{Iterable, QueryFilter};
 use serde::{Deserialize, Serialize};
-use std::cmp::max;
 use std::option::Option;
 
 mod execute;
@@ -64,7 +64,22 @@ impl SeaRepo {
         E: EntityTrait,
         Select<E>: for<'a> PaginatorTrait<'a, DbConn, Selector = SelectModel<E::Model>>,
     {
+        Self::page_with_order(db, pg, ces, None).await
+    }
+
+    pub async fn page_with_order<E>(
+        db: &DbConn,
+        pg: (u64, u64),
+        ces: Option<Vec<ConditionExpression>>,
+        order_by: Option<Vec<(E::Column, Order)>>, // 新增排序参数
+    ) -> anyhow::Result<(u64, Vec<E::Model>)>
+    where
+        E: EntityTrait,
+        Select<E>: for<'a> PaginatorTrait<'a, DbConn, Selector = SelectModel<E::Model>>,
+    {
         let mut ens = E::find();
+
+        // 处理过滤条件
         if let Some(ft) = ces {
             for exp in ft {
                 match exp {
@@ -73,17 +88,30 @@ impl SeaRepo {
                 }
             }
         }
+
+        // 处理默认的 deleted 过滤
         for e in E::Column::iter() {
             if e.as_str() == FIELD_DELETED {
                 ens = ens.filter(Condition::all().add(e.eq(0)));
             }
+            if e.as_str() == FIELD_CREATED_AT && order_by.is_none() {
+                ens = ens.order_by(e, Order::Desc);
+            }
         }
-        let ens = ens.paginate(db, pg.1);
 
+        // 新增：处理排序条件
+        if let Some(orders) = order_by {
+            for (col, order) in orders {
+                ens = ens.order_by(col, order);
+            }
+        }
+
+        let ens = ens.paginate(db, pg.1);
         let count = ens.num_items().await?;
-        let res = ens.fetch_page(max(pg.0 - 1, 0)).await?;
-        anyhow::Ok((count, res))
+        let res = ens.fetch_page(std::cmp::max(pg.0 - 1, 0)).await?;
+        Ok((count, res))
     }
+
     #[allow(dead_code)]
     pub async fn update_with_default<E>(
         db: &DbConn,

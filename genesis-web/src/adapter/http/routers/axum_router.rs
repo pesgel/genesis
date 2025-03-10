@@ -24,7 +24,8 @@ pub async fn routes(state: AppState) -> Router {
                 .route("/", post(save_instruct))
                 .route("/:id", get(get_instruct_by_id))
                 .route("/list", post(list_instruct))
-                .route("/execute", post(execute_instruct)),
+                .route("/execute", post(execute_instruct))
+                .route("/:id", delete(delete_instruct_by_id)),
         )
         .nest(
             "/node",
@@ -40,9 +41,15 @@ pub async fn routes(state: AppState) -> Router {
             Router::new()
                 .route("/:id", get(get_execute_by_id))
                 .route("/stop/:id", get(stop_execute_by_id))
-                .route("/list", post(list_execute)),
+                .route("/list", post(list_execute))
+                .route("/:id", delete(delete_execute_history_by_id)),
         )
-        .nest("/user", Router::new().route("/info", get(user_info)))
+        .nest(
+            "/user",
+            Router::new()
+                .route("/info", get(user_info))
+                .route("/:id", delete(delete_user_by_id)),
+        )
         .layer(middleware::from_fn(jwt_auth_middle));
 
     Router::new()

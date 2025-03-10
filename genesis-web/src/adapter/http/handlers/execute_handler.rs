@@ -1,10 +1,10 @@
 use crate::adapter::query::execute::ExecuteListQuery;
 use crate::adapter::vo::execute::{ExecuteListItemVO, ExecuteVO};
-use crate::adapter::{ResList, Response};
+use crate::adapter::{ResList, Response, ResponseSuccess};
 use crate::config::AppState;
 use crate::error::AppError;
 use crate::repo::model::execute;
-use crate::repo::sea::ExecuteRepo;
+use crate::repo::sea::{ExecuteRepo, SeaRepo};
 use axum::extract::{Path, State};
 use axum::Json;
 use sea_orm::sea_query::ConditionExpression;
@@ -65,4 +65,13 @@ pub async fn list_execute(
                     .collect(),
             ))))
         })?
+}
+
+pub async fn delete_execute_history_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ResponseSuccess>, AppError> {
+    SeaRepo::delete_by_id::<execute::Entity>(&state.conn, &id)
+        .await
+        .map(|_| Ok(Json(ResponseSuccess::default())))?
 }

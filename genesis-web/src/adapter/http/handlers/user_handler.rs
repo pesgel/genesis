@@ -5,9 +5,9 @@ use crate::adapter::{Response, ResponseSuccess};
 use crate::config::{AppState, SHARED_APP_CONFIG};
 use crate::error::{AppError, AppJson};
 use crate::repo::model::user;
-use crate::repo::sea::UserRepo;
+use crate::repo::sea::{SeaRepo, UserRepo};
 use crate::util::jwt;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::{Extension, Json};
 use uuid::Uuid;
 
@@ -66,4 +66,13 @@ pub async fn user_register(
     };
     UserRepo::insert_user_one(&state.conn, user).await?;
     Ok(Json(ResponseSuccess::default()))
+}
+
+pub async fn delete_user_by_id(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ResponseSuccess>, AppError> {
+    SeaRepo::delete_by_id::<user::Entity>(&state.conn, &id)
+        .await
+        .map(|_| Ok(Json(ResponseSuccess::default())))?
 }
