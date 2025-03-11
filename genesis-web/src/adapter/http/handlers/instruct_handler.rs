@@ -139,7 +139,7 @@ pub async fn execute_instruct(
     model.node_name = node.name;
     let uuid = ExecuteRepo::insert_execute_one(&state.conn, model).await?;
     // step4. execute
-    let mut pm = ProcessManger::new(execute_uniq_id.clone(), execute)?;
+    let mut pm = ProcessManger::new(execute_uniq_id.clone(), execute)?.with_default_recorder()?;
     let abort_sc = pm.get_abort_sc();
     tokio::spawn(async move {
         let mut status = TaskStatusEnum::Success;

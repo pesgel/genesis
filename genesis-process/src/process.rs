@@ -297,6 +297,20 @@ impl ProcessManger {
             recorder: Arc::new(Mutex::new(None)),
         })
     }
+    pub fn with_default_recorder(mut self) -> anyhow::Result<Self> {
+        self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
+            &self.uniq_id,
+            "./",
+            "xterm",
+            80,
+            40,
+        )?)));
+        anyhow::Ok(self)
+    }
+    pub fn with_recorder(&mut self, recorder: Recorder) -> &mut Self {
+        self.recorder = Arc::new(Mutex::new(Some(recorder)));
+        self
+    }
     pub fn with_ssh_cmd_wait_times(&mut self, times: u8) -> &mut Self {
         self.ssh_cmd_wait_times = times;
         self
@@ -334,7 +348,7 @@ impl ProcessManger {
 }
 
 impl ProcessManger {
-    pub async fn do_recording(&mut self, recv: EventSubscription<Bytes>) {
+    pub async fn do_recording(&self, recv: EventSubscription<Bytes>) {
         let mut abort_tx: watch::Receiver<bool> = self.abort_rc.clone();
         let mut receiver = recv.unbox();
         if let Some(mut recorder) = self.recorder.lock().await.take() {
@@ -380,10 +394,8 @@ impl ProcessManger {
         let (psc, _) = unbounded_channel::<Bytes>();
         let in_pipe = Pipe::new(psc, in_rc);
         let out_pipe = Pipe::new(sender, receiver.unbox());
-
         let mut manager = PipeManger::new(self.ssh_cmd_wait_times, self.uniq_id.clone());
         // step3.start interactive
-        // let (cmd_sc, mut cmd_rc) = unbounded_channel();
         let _ = manager
             .do_interactive(
                 in_pipe,
@@ -392,166 +404,12 @@ impl ProcessManger {
                 &self.abort_rc,
             )
             .await;
-        let res = manager.out_buf.clone();
-        let state = manager.state.clone();
-        let mut abort_execute_cmd = self.abort_rc.clone();
-
-        // step4. init cmd send channel
-        let (cmd_sender, mut cmd_executor) = unbounded_channel();
-        cmd_sender.send(self.execute.clone())?;
-
-        let mut subscribe = self.broadcast_receiver.resubscribe();
-        let a: tokio::task::JoinHandle<()> = tokio::spawn(async move {
-            loop {
-                select! {
-                    flag = abort_execute_cmd.changed() => match flag {
-                        Ok(_) => {
-                            if *abort_execute_cmd.borrow() {
-                                info!("loop receive abort signal");
-                                return;
-                            }
-                        },
-                        Err(e) => {
-                            info!("loop receive abort signal error: {:?}",e);
-                            return
-                        }, // 如果接收到错误，也退出
-                    },
-                    ma = cmd_executor.recv() => match ma {
-                            Some(execute) => {
-                            let exe = execute.lock().await.clone();
-                            let mut cmd = exe.node.core.cmd.clone();
-                            if !cmd.ends_with('\r') {
-                                cmd.push('\r');
-                            }
-                            // 发送命令到远程执行
-                            info!("send node:{} cmd:{}", exe.node.id, cmd);
-                            let _ = sc.send(cmd.into());
-                            // TODO write send cmd info
-
-                            // 执行完毕,根据子节点配置pre数据,判断需要走哪条分支
-                            if exe.children.is_empty() {
-                                return;
-                            }
-                            // children存在,组装出ExecuteFns
-                            let execute_fns = RwLock::new(Vec::new());
-                            // 整理子节点
-                            for children_node_arc in exe.children {
-                                let children_node = children_node_arc.lock().await.clone();
-                                let mut mm_fn: Vec<MatchFnType> = Vec::new();
-                                match children_node.node.pre {
-                                    Some(pre) => {
-                                        // pre存在,则获取其中的值
-                                        for pre_item in pre.list {
-                                            match pre_item.match_type {
-                                                PreMatchTypeEnum::Eq => {
-                                                    mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
-                                                        info!("input eq:{}", s);
-                                                        s == pre_item.value
-                                                    })));
-                                                }
-                                                PreMatchTypeEnum::Reg => {
-                                                    mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
-                                                        s == pre_item.value
-                                                    })));
-                                                }
-                                                PreMatchTypeEnum::Contains => {
-                                                    mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
-                                                        s.to_lowercase()
-                                                            .contains(&pre_item.value.to_lowercase())
-                                                    })));
-                                                }
-                                                PreMatchTypeEnum::NotContains => {
-                                                    mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
-                                                        !s.to_lowercase()
-                                                            .contains(&pre_item.value.to_lowercase())
-                                                    })));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    None => continue,
-                                }
-                                execute_fns.write().await.push(ExecuteFns {
-                                    fns: mm_fn,
-                                    execute: children_node_arc,
-                                });
-                            }
-                            //存在子节点,等待子节点匹配
-                            loop {
-                                select! {
-                                    flag = abort_execute_cmd.changed() => match flag {
-                                        Ok(_) => {
-                                            if *abort_execute_cmd.borrow() {
-                                                info!("cmd execute loop receive abort signal");
-                                                return; // 如果收到中止命令，退出
-                                            }
-                                        },
-                                        Err(e) => {
-                                            info!("cmd execute loop receive abort signal error: {:?}",e);
-                                            return
-                                        },
-                                    },
-                                    _ = tokio::time::sleep(Duration::from_secs(3)) => {
-                                        let content = &res.lock().await.screen().contents(); // 获取屏幕内容
-                                        info!("receive content: {}", content);
-                                        match process_execute_fns(&execute_fns, content, &cmd_sender, &state).await{
-                                            Ok(_) => {
-                                                info!("time stop loop");
-                                                break;
-                                            },
-                                            Err(_) => {
-                                                info!("time all not match content:{}\n",content);
-                                            },
-                                        }
-                                    },
-                                    ma = subscribe.recv() => match ma {
-                                        Ok(execute_state) => match execute_state{
-                                             ExecuteState::ExecutedCmd(md) => {
-                                                let content = md.output.clone();
-                                                info!("receive cmd: {:?}", md);
-                                                match process_execute_fns(&execute_fns, &content, &cmd_sender, &state).await{
-                                                    Ok(_) => {
-                                                        info!("cmd stop loop");
-                                                        break;
-                                                    },
-                                                    Err(_) => {
-                                                        info!("cmd all not match content:{}\n",content);
-                                                    },
-                                                }
-                                            }
-                                            ExecuteState::End(_)=> {
-                                                info!("receive execute end signal stop.");
-                                                return
-                                            }
-                                            _ => {}
-                                            },
-                                        Err(e)=>{
-                                           error!("receive execute end signal err: {:?}",e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            info!("stop execute cmd");
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-        // wait execute
-        // start recording
-        // TODO SSH Term Param
-        self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
-            &self.uniq_id,
-            "./",
-            "",
-            1,
-            1,
-        )?)));
-        let _ = tokio::join!(a, self.do_recording(hub.subscribe(|_| true).await));
-        // stop type check
+        // step5. cmd & recording process
+        let _ = tokio::join!(
+            self.do_cmd_process(sc, manager.out_buf.clone(), manager.state.clone()),
+            self.do_recording(hub.subscribe(|_| true).await)
+        );
+        // step6. stop type check
         let old = self.abort_rc.clone();
         if *old.borrow() {
             anyhow::bail!("outer stop")
@@ -559,6 +417,155 @@ impl ProcessManger {
             let _ = self.abort_sc.send(true);
             info!("end execute:{}", self.uniq_id);
             anyhow::Ok(())
+        }
+    }
+
+    async fn do_cmd_process(
+        &self,
+        sc: UnboundedSender<Bytes>,
+        res: Arc<Mutex<vt100::Parser>>,
+        state: Arc<RwLock<PipeState>>,
+    ) {
+        let (cmd_sender, mut cmd_executor) = unbounded_channel();
+        cmd_sender.send(self.execute.clone()).unwrap();
+        let mut abort_execute_cmd = self.abort_rc.clone();
+        let mut subscribe = self.broadcast_receiver.resubscribe();
+        loop {
+            select! {
+                flag = abort_execute_cmd.changed() => match flag {
+                    Ok(_) => {
+                        if *abort_execute_cmd.borrow() {
+                            info!("loop receive abort signal");
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        info!("loop receive abort signal error: {:?}",e);
+                        return
+                    }, // 如果接收到错误，也退出
+                },
+                ma = cmd_executor.recv() => match ma {
+                        Some(execute) => {
+                        let exe = execute.lock().await.clone();
+                        let mut cmd = exe.node.core.cmd.clone();
+                        if !cmd.ends_with('\r') {
+                            cmd.push('\r');
+                        }
+                        // 发送命令到远程执行
+                        info!("send node:{} cmd:{}", exe.node.id, cmd);
+                        let _ = sc.send(cmd.into());
+                        // TODO write send cmd info
+
+                        // 执行完毕,根据子节点配置pre数据,判断需要走哪条分支
+                        if exe.children.is_empty() {
+                            return;
+                        }
+                        // children存在,组装出ExecuteFns
+                        let execute_fns = RwLock::new(Vec::new());
+                        // 整理子节点
+                        for children_node_arc in exe.children {
+                            let children_node = children_node_arc.lock().await.clone();
+                            let mut mm_fn: Vec<MatchFnType> = Vec::new();
+                            match children_node.node.pre {
+                                Some(pre) => {
+                                    // pre存在,则获取其中的值
+                                    for pre_item in pre.list {
+                                        match pre_item.match_type {
+                                            PreMatchTypeEnum::Eq => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    info!("input eq:{}", s);
+                                                    s == pre_item.value
+                                                })));
+                                            }
+                                            PreMatchTypeEnum::Reg => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    s == pre_item.value
+                                                })));
+                                            }
+                                            PreMatchTypeEnum::Contains => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    s.to_lowercase()
+                                                        .contains(&pre_item.value.to_lowercase())
+                                                })));
+                                            }
+                                            PreMatchTypeEnum::NotContains => {
+                                                mm_fn.push(Arc::new(Mutex::new(move |s: &str| {
+                                                    !s.to_lowercase()
+                                                        .contains(&pre_item.value.to_lowercase())
+                                                })));
+                                            }
+                                        }
+                                    }
+                                }
+                                None => continue,
+                            }
+                            execute_fns.write().await.push(ExecuteFns {
+                                fns: mm_fn,
+                                execute: children_node_arc,
+                            });
+                        }
+                        //存在子节点,等待子节点匹配
+                        loop {
+                            select! {
+                                flag = abort_execute_cmd.changed() => match flag {
+                                    Ok(_) => {
+                                        if *abort_execute_cmd.borrow() {
+                                            info!("cmd execute loop receive abort signal");
+                                            return; // 如果收到中止命令，退出
+                                        }
+                                    },
+                                    Err(e) => {
+                                        info!("cmd execute loop receive abort signal error: {:?}",e);
+                                        return
+                                    },
+                                },
+                                _ = tokio::time::sleep(Duration::from_secs(3)) => {
+                                    let content = &res.lock().await.screen().contents(); // 获取屏幕内容
+                                    info!("receive content: {}", content);
+                                    match process_execute_fns(&execute_fns, content, &cmd_sender, &state).await{
+                                        Ok(_) => {
+                                            info!("time stop loop");
+                                            break;
+                                        },
+                                        Err(_) => {
+                                            info!("time all not match content:{}\n",content);
+                                        },
+                                    }
+                                },
+                                ma = subscribe.recv() => match ma {
+                                    Ok(execute_state) => match execute_state{
+                                         ExecuteState::ExecutedCmd(md) => {
+                                            let content = md.output.clone();
+                                            info!("receive cmd: {:?}", md);
+                                            match process_execute_fns(&execute_fns, &content, &cmd_sender, &state).await{
+                                                Ok(_) => {
+                                                    info!("cmd stop loop");
+                                                    break;
+                                                },
+                                                Err(_) => {
+                                                    info!("cmd all not match content:{}\n",content);
+                                                },
+                                            }
+                                        }
+                                        ExecuteState::End(_)=> {
+                                            info!("receive execute end signal stop.");
+                                            return
+                                        }
+                                        _ => {}
+                                        },
+                                    Err(e)=>{
+                                       error!("receive execute end signal err: {:?}",e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        info!("stop execute cmd");
+                        break;
+                    }
+                }
+            }
         }
     }
 }
