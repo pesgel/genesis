@@ -3,7 +3,7 @@ use crate::repo::model::node;
 use crate::repo::sea::SeaRepo;
 use sea_orm::sea_query::ConditionExpression;
 use sea_orm::ActiveValue::Set;
-use sea_orm::{DbConn, DbErr, EntityTrait};
+use sea_orm::{ColumnTrait, DbConn, DbErr, EntityTrait, Order, QueryFilter, QueryOrder};
 
 pub struct NodeRepo;
 
@@ -49,6 +49,10 @@ impl NodeRepo {
     }
 
     pub async fn node_select_kv(db: &DbConn) -> Result<Vec<node::Model>, DbErr> {
-        node::Entity::find().all(db).await
+        node::Entity::find()
+            .filter(node::Column::Deleted.eq(0))
+            .order_by(node::Column::CreatedAt, Order::Desc)
+            .all(db)
+            .await
     }
 }
