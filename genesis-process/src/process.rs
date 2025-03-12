@@ -67,154 +67,176 @@ impl PipeManger {
             input_buf: Arc::new(Default::default()),
         }
     }
-    pub async fn do_interactive(
-        &mut self,
-        mut in_io: Pipe,
-        mut out_io: Pipe,
-        state_sender: broadcast::Sender<ExecuteState>,
-        abort_rc: &Receiver<bool>,
-    ) -> Result<(), String> {
-        let mut abort_in_io: watch::Receiver<bool> = abort_rc.clone();
-        // step1. receive in data
-        tokio::spawn({
-            let ps1 = self.ps1.clone();
-            let state = self.state.clone();
-            let wait_times = self.wait_times;
-            async move {
-                loop {
-                    select! {
-                        flag = abort_in_io.changed() => match flag {
-                            Ok(_) => {
-                                if *abort_in_io.borrow() {
-                                    info!("interactive receive abort signal");
-                                    return ;
-                                }
-                            },
-                            Err(e) => {
-                                info!("interactive receive abort signal error: {:?}",e);
-                                return ;
-                            },
-                        },
-                        rb = in_io.reader.recv() => match rb {
-                            Some(data) => {
-                                // 未设置ps1 不允许输入
-                                while ps1.read().await.is_empty() {
+
+    pub async fn do_process_in(
+        &self,
+        mut abort_in_io: Receiver<bool>,
+        out_io_sender: UnboundedSender<Bytes>,
+        mut in_io_reader: UnboundedReceiver<Bytes>,
+    ) {
+        let ps1 = self.ps1.clone();
+        let state = self.state.clone();
+        let wait_times = self.wait_times;
+        loop {
+            select! {
+                flag = abort_in_io.changed() => match flag {
+                    Ok(_) => {
+                        if *abort_in_io.borrow() {
+                            info!("interactive receive abort signal");
+                            return ;
+                        }
+                    },
+                    Err(e) => {
+                        info!("interactive receive abort signal error: {:?}",e);
+                        return ;
+                    },
+                },
+                rb = in_io_reader.recv() => match rb {
+                    Some(data) => {
+                        // 未设置ps1 不允许输入
+                        while ps1.read().await.is_empty() {
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                        }
+                        // 判断输入状态是否是允许输入
+                        let mut now_wait_time = 0;
+                        loop {
+                            match *state.read().await {
+                                PipeState::In => break,
+                                PipeState::Out => {
                                     tokio::time::sleep(Duration::from_millis(20)).await;
-                                }
-                                // 判断输入状态是否是允许输入
-                                let mut now_wait_time = 0;
-                                loop {
-                                    match *state.read().await {
-                                        PipeState::In => break,
-                                        PipeState::Out => {
-                                            tokio::time::sleep(Duration::from_millis(20)).await;
-                                            now_wait_time += 1;
-                                            if now_wait_time >= wait_times {
-                                                info!("time out, break");
-                                                break;
-                                            }
-                                        },
+                                    now_wait_time += 1;
+                                    if now_wait_time >= wait_times {
+                                        info!("time out, break");
+                                        break;
                                     }
-                                }
-                                let _ = out_io.sender.send(data);
-                            },
-                            None => {
-                                info!("receive none");
-                                break
-                            },
+                                },
+                            }
                         }
-                    }
+                        let _ = out_io_sender.send(data);
+                    },
+                    None => {
+                        info!("receive none");
+                        break
+                    },
                 }
             }
+        }
+    }
+
+    pub async fn do_process_out(
+        &self,
+        mut abort_rc: Receiver<bool>,
+        in_io_sender: UnboundedSender<Bytes>,
+        mut out_io_reader: UnboundedReceiver<Bytes>,
+        state_sender: broadcast::Sender<ExecuteState>,
+    ) {
+        let parser = self.parser.clone();
+        let ps1 = self.ps1.clone();
+        let stat = self.state.clone();
+        let input = self.input_buf.clone();
+        let output = self.out_buf.clone();
+        let mut buffer = BytesMut::new();
+        'ro: loop {
+            select! {
+                rb = out_io_reader.recv() => match rb {
+                    Some(data) => {
+                        // step1. send ssh server data to broadcast
+                        let _ = state_sender.send(ExecuteState::ExecutedBytes(data.clone()));
+                        // step2. remove redundancy data
+                        let parts: Vec<Bytes> = data
+                            .split(|&byte| byte == b'\r')
+                            .flat_map(|part| once(Bytes::copy_from_slice(part)).chain(once(Bytes::from_static(b"\r"))))
+                            .take(data.split(|&byte| byte == b'\r').count() * 2 - 1) // 去掉最后一个多余的 \r
+                            .filter(|e| !e.is_empty())
+                            .collect();
+                        // loop
+                        for data in parts.iter() {
+                            let mut par = parser.lock().await;
+                            par.process(data);
+                            if par.screen().alternate_screen() {
+                                //VIM等界面
+                                continue 'ro;
+                            }
+                            if data.len() ==1 && data[0] == b'\r'{
+                                *(stat.write().await) = PipeState::Out;
+                            }
+                            // 判断当前接受状态,若是输入状态,则写到input
+                            // 若是输出状态,则写入到output
+                            if !ps1.read().await.is_empty() {
+                                match *(stat.read().await) {
+                                    PipeState::In => {
+                                        input.lock().await.process(data);
+                                    },
+                                    PipeState::Out => {
+                                        output.lock().await.process(data);
+                                    },
+                                }
+                            }
+                            buffer.extend_from_slice(data);
+                            if let Some(p1) = extract_command_after_bell(&buffer){
+                                *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
+                                // 打印ps1,并清空
+                                *(stat.write().await) = PipeState::In;
+                                buffer.clear();
+
+                                let mut input = input.lock().await;
+                                let cmd_input = input.screen().contents().trim().to_string();
+                                if cmd_input.is_empty() {
+                                    continue;
+                                }
+                                input.process(b"\x1b[2J");
+                                let mut output = output.lock().await;
+                                let ps1_value = ps1.read().await;
+                                let cmd_out = output.screen().contents().replace(ps1_value.as_str(), "").trim().to_string();
+                                output.process(b"\x1b[2J");
+                                let _ = state_sender.send(ExecuteState::ExecutedCmd(PipeCmd{
+                                    input: cmd_input,
+                                    output: cmd_out,
+                                }));
+                            }
+                        }
+                        // 处理完毕,发送数据
+                        let _ = in_io_sender.send(data);
+                    },
+                    None => {return ;},
+                },
+                flag = abort_rc.changed() => match flag {
+                    Ok(_) => {
+                        if *abort_rc.borrow() {
+                            info!("do_process_out receive abort signal");
+                            return ;
+                        }
+                    },
+                    Err(_) => {
+                        return ;
+                    },
+                }
+            }
+        }
+    }
+
+    pub async fn do_interactive(
+        self: Arc<Self>,
+        in_io: Pipe,
+        out_io: Pipe,
+        state_sender: broadcast::Sender<ExecuteState>,
+        abort_rc: Receiver<bool>,
+    ) -> Result<(), String> {
+        // step1. receive in data
+        let in_abort_rc = abort_rc.clone();
+        let in_self = self.clone();
+        tokio::spawn(async move {
+            in_self
+                .do_process_in(in_abort_rc, out_io.sender, in_io.reader)
+                .await
         });
-
         // step2. process ssh server response data
-        tokio::spawn({
-            let parser = self.parser.clone();
-            let ps1 = self.ps1.clone();
-            let stat = self.state.clone();
-            let input = self.input_buf.clone();
-            let output = self.out_buf.clone();
-            let mut abort_sc: watch::Receiver<bool> = abort_rc.clone();
-            async move {
-                let mut buffer = BytesMut::new();
-                'ro: loop {
-                    select! {
-                        rb = out_io.reader.recv() => match rb {
-                            Some(data) => {
-                                // step1. send ssh server data to broadcast
-                                let _ = state_sender.send(ExecuteState::ExecutedBytes(data.clone()));
-                                // step2. remove redundancy data
-                                let parts: Vec<Bytes> = data
-                                    .split(|&byte| byte == b'\r')
-                                    .flat_map(|part| once(Bytes::copy_from_slice(part)).chain(once(Bytes::from_static(b"\r"))))
-                                    .take(data.split(|&byte| byte == b'\r').count() * 2 - 1) // 去掉最后一个多余的 \r
-                                    .filter(|e| !e.is_empty())
-                                    .collect();
-                                // loop
-                                for data in parts.iter() {
-                                    let mut par = parser.lock().await;
-                                    par.process(data);
-                                    if par.screen().alternate_screen() {
-                                        //VIM等界面
-                                        continue 'ro;
-                                    }
-                                    if data.len() ==1 && data[0] == b'\r'{
-                                        *(stat.write().await) = PipeState::Out;
-                                    }
-                                    // 判断当前接受状态,若是输入状态,则写到input
-                                    // 若是输出状态,则写入到output
-                                    if !ps1.read().await.is_empty() {
-                                        match *(stat.read().await) {
-                                            PipeState::In => {
-                                                input.lock().await.process(data);
-                                            },
-                                            PipeState::Out => {
-                                                output.lock().await.process(data);
-                                            },
-                                        }
-                                    }
-                                    buffer.extend_from_slice(data);
-                                    if let Some(p1) = extract_command_after_bell(&buffer){
-                                        *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
-                                        // 打印ps1,并清空
-                                        *(stat.write().await) = PipeState::In;
-                                        buffer.clear();
-
-                                        let mut input = input.lock().await;
-                                        let cmd_input = input.screen().contents().trim().to_string();
-                                        if cmd_input.is_empty() {
-                                            continue;
-                                        }
-                                        input.process(b"\x1b[2J");
-                                        let mut output = output.lock().await;
-                                        let ps1_value = ps1.read().await;
-                                        let cmd_out = output.screen().contents().replace(ps1_value.as_str(), "").trim().to_string();
-                                        output.process(b"\x1b[2J");
-                                        let _ = state_sender.send(ExecuteState::ExecutedCmd(PipeCmd{
-                                            input: cmd_input,
-                                            output: cmd_out,
-                                        }));
-                                    }
-                                }
-                                // 处理完毕,发送数据
-                                let _ = in_io.sender.send(data);
-                            },
-                            None => {return ;},
-                        },
-                        flag = abort_sc.changed() => match flag {
-                            Ok(_) => {
-                                if *abort_sc.borrow() {
-                                    return ;
-                                }
-                            },
-                            Err(_) => {
-                                return ;
-                            },
-                        }
-                    }
-                }
-            }
+        let out_abort_rc = abort_rc.clone();
+        let out_self = self.clone();
+        tokio::spawn(async move {
+            out_self
+                .do_process_out(out_abort_rc, in_io.sender, out_io.reader, state_sender)
+                .await
         });
         Ok(())
     }
@@ -394,19 +416,21 @@ impl ProcessManger {
         let (psc, _) = unbounded_channel::<Bytes>();
         let in_pipe = Pipe::new(psc, in_rc);
         let out_pipe = Pipe::new(sender, receiver.unbox());
-        let mut manager = PipeManger::new(self.ssh_cmd_wait_times, self.uniq_id.clone());
+        let manager = PipeManger::new(self.ssh_cmd_wait_times, self.uniq_id.clone());
         // step3.start interactive
-        let _ = manager
+        let new_manager = Arc::new(manager);
+        let _ = new_manager
+            .clone()
             .do_interactive(
                 in_pipe,
                 out_pipe,
                 self.broadcast_sender.clone(),
-                &self.abort_rc,
+                self.abort_rc.clone(),
             )
             .await;
         // step5. cmd & recording process
         let _ = tokio::join!(
-            self.do_cmd_process(sc, manager.out_buf.clone(), manager.state.clone()),
+            self.do_cmd_process(sc, new_manager.out_buf.clone(), new_manager.state.clone()),
             self.do_recording(hub.subscribe(|_| true).await)
         );
         // step6. stop type check
@@ -790,10 +814,11 @@ mod tests {
         let in_pipe = Pipe::new(psc, in_rc);
         let out_pipe = Pipe::new(sender, receiver.unbox());
 
-        let mut manager = PipeManger::default();
+        let manager = PipeManger::default();
         let (abort_sc, abort_rc) = watch::channel(false);
         let (scc, _rc) = broadcast::channel(16);
-        let ma = manager.do_interactive(in_pipe, out_pipe, scc.clone(), &abort_rc);
+        let new_manager = Arc::new(manager);
+        let ma = new_manager.do_interactive(in_pipe, out_pipe, scc.clone(), abort_rc.clone());
 
         let a = tokio::spawn(async move {
             let _ = tokio::time::sleep(Duration::from_secs(5)).await;
