@@ -33,6 +33,7 @@ pub struct Post {
 pub struct Core {
     pub des: String,
     pub cmd: String,
+    pub expire: u64,
 }
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Position {
