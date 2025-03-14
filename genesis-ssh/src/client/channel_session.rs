@@ -105,7 +105,6 @@ impl SessionChannel {
                     match channel_event {
                         Some(russh::ChannelMsg::Data { data }) => {
                             let bytes: &[u8] = &data;
-                            debug!("channel data: {bytes:?}");
                             self.events_tx.send(RCEvent::Output(
                                 self.channel_id,
                                 Bytes::from(bytes.to_vec()),

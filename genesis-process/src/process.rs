@@ -336,6 +336,23 @@ impl ProcessManger {
         )?)));
         anyhow::Ok(self)
     }
+    pub fn with_recorder_param(
+        mut self,
+        save_path: &str,
+        term: &str,
+        height: u8,
+        width: u8,
+    ) -> anyhow::Result<Self> {
+        self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
+            &self.uniq_id,
+            save_path,
+            term,
+            height,
+            width,
+        )?)));
+        anyhow::Ok(self)
+    }
+
     pub fn with_recorder(&mut self, recorder: Recorder) -> &mut Self {
         self.recorder = Arc::new(Mutex::new(Some(recorder)));
         self
@@ -579,7 +596,7 @@ impl ProcessManger {
                             break;
                         },
                         Err(_) => {
-                            error!(session_id=%self.uniq_id,"time all not match content:{}\n",content);
+                            debug!(session_id=%self.uniq_id,"time all not match content:{}\n",content);
                         },
                     }
                 },

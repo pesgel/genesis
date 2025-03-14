@@ -607,7 +607,7 @@ pub async fn start_ssh_connect(
     let (tx, rx) = oneshot::channel();
     handle
         .command_tx
-        .send((RCCommand::Connect(option), Some(tx)))?;
+        .send((RCCommand::Connect(option.clone()), Some(tx)))?;
     let _ = rx.await?;
     // step2. start open channel
     let channel_id = Uuid::new_v4();
@@ -622,9 +622,9 @@ pub async fn start_ssh_connect(
         RCCommand::Channel(
             channel_id,
             ChannelOperation::RequestPty(crate::PtyRequest {
-                term: "xterm".into(),
-                col_width: 80,
-                row_height: 24,
+                term: option.pty_request.term,
+                col_width: option.pty_request.width as u32,
+                row_height: option.pty_request.height as u32,
                 pix_width: 0,
                 pix_height: 0,
                 modes: vec![],
@@ -711,6 +711,7 @@ mod tests {
                         auth: SSHTargetAuth::Password(SshTargetPasswordAuth {
                             password: "1qaz2wsx".into(),
                         }),
+                        pty_request: Default::default(),
                     }),
                     Some(tx),
                 );

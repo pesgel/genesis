@@ -1,11 +1,13 @@
 use crate::adapter::query::execute::ExecuteListQuery;
 use crate::adapter::vo::execute::{ExecuteListItemVO, ExecuteVO};
 use crate::adapter::{ResList, Response, ResponseSuccess};
-use crate::config::AppState;
+use crate::config::{AppState, SHARED_APP_CONFIG};
 use crate::error::AppError;
 use crate::repo::model::execute;
 use crate::repo::sea::{ExecuteRepo, SeaRepo};
 use axum::extract::{Path, State};
+use axum::http;
+use axum::response::IntoResponse;
 use axum::Json;
 use sea_orm::sea_query::ConditionExpression;
 use sea_orm::{ColumnTrait, Condition};
@@ -74,4 +76,38 @@ pub async fn delete_execute_history_by_id(
     SeaRepo::delete_by_id::<execute::Entity>(&state.conn, &id)
         .await
         .map(|_| Ok(Json(ResponseSuccess::default())))?
+}
+
+pub async fn execute_recording(Path(id): Path<String>) -> impl IntoResponse {
+    let base_path = &SHARED_APP_CONFIG.read().await.server.recording_path;
+    let file_path = std::path::Path::new(base_path)
+        .join("ssh")
+        .join(id)
+        .join("recording.cast");
+    match file_path.canonicalize() {
+        Ok(real_path) => {
+            if !real_path.starts_with(base_path) {
+                return http::StatusCode::FORBIDDEN.into_response();
+            }
+            match tokio::fs::File::open(&real_path).await {
+                Ok(file) => {
+                    let stream = tokio_util::io::ReaderStream::new(file);
+                    // 设置 `Content-Disposition` 让浏览器下载文件
+                    http::Response::builder()
+                        .status(http::StatusCode::OK)
+                        .header(http::header::CONTENT_TYPE, "application/octet-stream")
+                        .header(
+                            http::header::CONTENT_DISPOSITION,
+                            format!("attachment; filename=\"{}\"", "recording.cast"),
+                        )
+                        //.body(axum::body::Body::from(buffer))
+                        .body(axum::body::Body::from_stream(stream))
+                        .unwrap()
+                        .into_response()
+                }
+                Err(_) => http::StatusCode::BAD_REQUEST.into_response(),
+            }
+        }
+        Err(_) => http::StatusCode::BAD_REQUEST.into_response(),
+    }
 }

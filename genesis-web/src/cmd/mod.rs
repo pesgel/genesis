@@ -17,8 +17,8 @@ pub struct GenesisCli {
 pub enum Commands {
     #[command(name = "run", about = "run cli")]
     Run {
-        #[clap(long, short, value_enum)]
-        mode: ModeEnum,
+        // #[clap(long, short, value_enum)]
+        // mode: ModeEnum,
         #[arg(long, short, value_parser = verify_input_file, default_value = "config.toml", action=ArgAction::Set)]
         config: PathBuf,
     },

@@ -6,7 +6,6 @@ license = "Apache-2.0"
 [dependencies]
 anyhow = "1.0.91"
 axum = { version = "0.7.7", features = ["ws", "macros"] }
-bytes = "1.8.0"
 clap = { version = "4.5.20", features = ["derive"] }
 futures-util = "0.3.31"
 lazy_static = "1.5.0"
@@ -15,20 +14,19 @@ serde_json = "1.0.132"
 strum = { version = "0.26.3", features = ["derive"] }
 thiserror = "2.0.4"
 tokio = { version = "1.41.0", features = ["full"] }
+tokio-util = { version = "0.7.13", features = ["io"] }
 toml = "0.8.19"
 tracing = "0.1.40"
-tracing-subscriber = "0.3.18"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 uuid = "1.11.0"
 
 validator = { version = "0.19.0", features = ["derive"] }
 sea-orm = { version = "1.1.2", features = ["debug-print", "runtime-tokio-native-tls", "sqlx-mysql"] }
 chrono = "0.4.38"
 
-getset = "0.1.2"
 
 jsonwebtoken = "9.3.0"
 
-redis = { version = "0.25.4", features = ["tokio-comp"] }
 
 [dependencies.genesis-ssh]
 path = "../genesis-ssh"

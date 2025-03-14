@@ -13,7 +13,7 @@ use crate::adapter::query::instruct::InstructListQuery;
 use crate::adapter::vo::instruct::InstructVO;
 use crate::adapter::{ExecuteReplaceItem, ResList, Response, ResponseSuccess};
 use crate::common::TaskStatusEnum;
-use crate::config::EXECUTE_MAP_MANAGER;
+use crate::config::{EXECUTE_MAP_MANAGER, SHARED_APP_CONFIG};
 use crate::repo::model;
 use crate::repo::model::instruct;
 use crate::repo::sea::{ExecuteRepo, InstructRepo, NodeRepo, SeaRepo};
@@ -126,6 +126,8 @@ pub async fn execute_instruct(
         auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
             password: node.password,
         }),
+        // TODO pty param
+        pty_request: Default::default(),
     };
     // step4. insert execute data
     let execute_uniq_id = Uuid::new_v4().to_string();
@@ -139,7 +141,12 @@ pub async fn execute_instruct(
     model.node_name = node.name;
     let uuid = ExecuteRepo::insert_execute_one(&state.conn, model).await?;
     // step4. execute
-    let mut pm = ProcessManger::new(execute_uniq_id.clone(), execute)?.with_default_recorder()?;
+    let mut pm = ProcessManger::new(execute_uniq_id.clone(), execute)?.with_recorder_param(
+        &SHARED_APP_CONFIG.read().await.server.recording_path,
+        &option.pty_request.term,
+        option.pty_request.height,
+        option.pty_request.width,
+    )?;
     let abort_sc = pm.get_abort_sc();
     tokio::spawn(async move {
         let mut status = TaskStatusEnum::Success;

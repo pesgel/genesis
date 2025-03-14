@@ -42,6 +42,7 @@ pub async fn routes(state: AppState) -> Router {
                 .route("/:id", get(get_execute_by_id))
                 .route("/stop/:id", get(stop_execute_by_id))
                 .route("/list", post(list_execute))
+                .route("/recording/download/:id", get(execute_recording))
                 .route("/:id", delete(delete_execute_history_by_id)),
         )
         .nest(

@@ -11,6 +11,25 @@ pub struct TargetSSHOptions {
     pub allow_insecure_algos: Option<bool>,
     #[serde(default)]
     pub auth: SSHTargetAuth,
+    #[serde(default)]
+    pub pty_request: PtyRequest,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PtyRequest {
+    pub term: String,
+    pub width: u8,
+    pub height: u8,
+}
+
+impl Default for PtyRequest {
+    fn default() -> Self {
+        Self {
+            term: "xterm".to_string(),
+            width: 80,
+            height: 20,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
