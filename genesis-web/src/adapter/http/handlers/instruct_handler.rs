@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use genesis_common::{SshTargetPasswordAuth, TargetSSHOptions};
+use genesis_common::{SshTargetPasswordAuth, TargetSSHOptions, TaskStatusEnum};
 use sea_orm::sea_query::ConditionExpression;
 use sea_orm::{ColumnTrait, Condition};
 use tracing::error;
@@ -12,7 +12,6 @@ use crate::adapter::cmd::instruct::{InstructExecuteCmd, InstructSaveCmd};
 use crate::adapter::query::instruct::InstructListQuery;
 use crate::adapter::vo::instruct::InstructVO;
 use crate::adapter::{ExecuteReplaceItem, ResList, Response, ResponseSuccess};
-use crate::common::TaskStatusEnum;
 use crate::config::{EXECUTE_MAP_MANAGER, SHARED_APP_CONFIG};
 use crate::repo::model;
 use crate::repo::model::instruct;
@@ -134,7 +133,7 @@ pub async fn execute_instruct(
     let mut model = model::execute::Model::new();
     model.id = execute_uniq_id.clone();
     model.name = data.name.clone();
-    model.state = TaskStatusEnum::Init as i32;
+    model.state = genesis_common::TaskStatusEnum::Init as i32;
     model.instruct_id = data.id;
     model.instruct_name = ins.name;
     model.node_id = data.node;
@@ -149,15 +148,15 @@ pub async fn execute_instruct(
     )?;
     let abort_sc = pm.get_abort_sc();
     tokio::spawn(async move {
-        let mut status = TaskStatusEnum::Success;
+        // = TaskStatusEnum::Success;
         let mut remark = String::new();
-        match pm.run(Uuid::new_v4(), option).await {
-            Ok(_) => {}
+        let status = match pm.run(Uuid::new_v4(), option).await {
+            Ok(em) => em,
             Err(e) => {
-                status = TaskStatusEnum::ManualStop;
                 remark = e.to_string();
+                TaskStatusEnum::Error
             }
-        }
+        };
         let mut update_model = model::execute::Model::new();
         update_model.id = uuid;
         update_model.state = status as i32;
@@ -214,7 +213,7 @@ async fn stop_execute_callback(
 ) -> Result<Json<ResponseSuccess>, AppError> {
     let mut update_model = model::execute::Model::new();
     update_model.id = id;
-    update_model.state = TaskStatusEnum::Error as i32;
+    update_model.state = TaskStatusEnum::ManualStop as i32;
     update_model.remark = e;
     let res = ExecuteRepo::update_execute_state(&state.conn, update_model).await;
     match res {

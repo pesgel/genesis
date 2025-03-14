@@ -3,7 +3,7 @@
 use crate::recording::Recorder;
 use crate::{Execute, Item, PreMatchTypeEnum};
 use bytes::{Bytes, BytesMut};
-use genesis_common::{EventSubscription, NotifyEnum, TargetSSHOptions};
+use genesis_common::{EventSubscription, NotifyEnum, TargetSSHOptions, TaskStatusEnum};
 use genesis_ssh::start_ssh_connect;
 use std::io::Write;
 use std::iter::once;
@@ -456,7 +456,11 @@ impl ProcessManger {
         }
     }
     #[allow(dead_code)]
-    pub async fn run(&mut self, uuid: Uuid, ssh_option: TargetSSHOptions) -> anyhow::Result<()> {
+    pub async fn run(
+        &mut self,
+        uuid: Uuid,
+        ssh_option: TargetSSHOptions,
+    ) -> anyhow::Result<genesis_common::TaskStatusEnum> {
         let (hub, sender, notify) = start_ssh_connect(uuid, ssh_option).await?;
         // step1. wait until ssh connected
         self.wait_ssh_state(notify).await?;
@@ -486,14 +490,14 @@ impl ProcessManger {
         // step6. stop type check
         let old = self.abort_rc.clone();
         if *old.borrow() {
-            anyhow::bail!(self
-                .get_execute_info()
+            self.get_execute_info()
                 .await
-                .unwrap_or("outer stop".to_string()))
+                .map(|s| anyhow::bail!(s))
+                .unwrap_or(anyhow::Ok(TaskStatusEnum::ManualStop))
         } else {
             let _ = self.abort_sc.send(true);
             debug!(session_id=%self.uniq_id,"end execute:{}", self.uniq_id);
-            anyhow::Ok(())
+            anyhow::Ok(TaskStatusEnum::Success)
         }
     }
 

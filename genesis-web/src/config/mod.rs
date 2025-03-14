@@ -24,6 +24,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
     pub addr: String,
     pub port: String,
