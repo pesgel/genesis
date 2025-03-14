@@ -1,5 +1,3 @@
-use std::env;
-
 use clap::Parser;
 use genesis_web::config::init_shared_app_state;
 use genesis_web::{adapter, cmd::*, config};
@@ -9,14 +7,19 @@ async fn main() {
     // step1. parse cli
     let cli = GenesisCli::parse();
     match cli.command {
-        Commands::Run { mode, config } => {
-            // set log level
-            unsafe {
-                env::set_var("RUST_LOG", mode.as_ref());
-            }
-            tracing_subscriber::fmt::init();
+        Commands::Run { config } => {
             // set config
             let config = config::parse_config(&config).await.unwrap();
+            // error level
+            let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+            // convert config
+            if let Some(tracing) = &config.tracing {
+                for x in tracing.filter.split(",") {
+                    filter = filter.add_directive(x.parse().unwrap());
+                }
+            }
+            // register
+            tracing_subscriber::fmt().with_env_filter(filter).init();
             // init state
             let state = init_shared_app_state(&config).await.unwrap();
             // step2. start web

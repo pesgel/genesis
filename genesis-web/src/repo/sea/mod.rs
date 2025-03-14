@@ -314,6 +314,7 @@ mod tests {
             server: Default::default(),
             mysql_config: Default::default(),
             jwt_config: Default::default(),
+            tracing: Default::default(),
         };
         config.mysql_config.host = "127.0.0.1:13306".to_string();
         config.mysql_config.database = "genesis".to_string();

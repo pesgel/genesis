@@ -19,9 +19,9 @@ struct Env {
 #[derive(Debug, Serialize, Deserialize)]
 struct Header {
     title: String,
-    version: i32,
-    height: i32,
-    width: i32,
+    version: u8,
+    height: u8,
+    width: u8,
     env: Env,
     #[serde(rename = "Timestamp")]
     timestamp: i64,
@@ -34,13 +34,7 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new(
-        uniq_id: &str,
-        root_path: &str,
-        term: &str,
-        height: i32,
-        width: i32,
-    ) -> Result<Self> {
+    pub fn new(uniq_id: &str, root_path: &str, term: &str, height: u8, width: u8) -> Result<Self> {
         let path = PathBuf::from(root_path)
             .join(SSH_KIND)
             .join(uniq_id)

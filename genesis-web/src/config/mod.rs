@@ -19,12 +19,21 @@ pub struct AppConfig {
     pub mysql_config: MysqlConfig,
     #[serde(rename = "jwt")]
     pub jwt_config: JwtConfig,
+    #[serde(rename = "tracing")]
+    pub tracing: Option<TracingConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ServerConfig {
     pub addr: String,
     pub port: String,
+    #[serde(default = "genesis_common::_default_recording_path")]
+    pub recording_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TracingConfig {
+    pub filter: String,
 }
 impl ServerConfig {
     pub fn url(&self) -> String {

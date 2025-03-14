@@ -37,6 +37,7 @@ pub async fn handler_ssh(ws: WebSocketUpgrade, State(state): State<AppState>) ->
         auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
             password: "1qaz2wsx".into(),
         }),
+        pty_request: Default::default(),
     };
     match start_ssh_connect(uuid, option).await {
         Ok((hub, xs, mut abort_rc)) => {
