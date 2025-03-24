@@ -1,19 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
+use crate::common::em::PreMatchTypeEnum;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use validator::Validate;
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum PreMatchTypeEnum {
-    Eq,
-    Reg,
-    #[default]
-    Contains,
-    NotContains,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

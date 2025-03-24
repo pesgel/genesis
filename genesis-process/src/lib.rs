@@ -1,5 +1,6 @@
 //! process
 
+mod common;
 mod instruct;
 mod process;
 mod recording;

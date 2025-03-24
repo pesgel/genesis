@@ -6,7 +6,7 @@ license = "Apache-2.0"
 [dependencies]
 uuid = "1.11.0"
 tracing = "0.1.40"
-tokio = {version="1.41.0", features = ["tracing", "signal","io-std"]}
+tokio = { version = "1.41.0", features = ["tracing", "signal", "io-std"] }
 vt100 = "0.15.2"
 bytes = "1.8.0"
 tracing-subscriber = "0.3.18"
@@ -15,10 +15,12 @@ anyhow = "1.0.91"
 serde = { version = "1.0.214", features = ["derive"] }
 serde_json = "1.0.132"
 validator = { version = "0.19.0", features = ["derive"] }
+futures = "0.3.31"
+regex = "1.11.1"
 
 
 [dependencies.genesis-ssh]
-path="../genesis-ssh"
+path = "../genesis-ssh"
 
 [dependencies.genesis-common]
-path="../genesis-common"
+path = "../genesis-common"
