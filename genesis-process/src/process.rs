@@ -1,10 +1,13 @@
 //! process
 
+use crate::common::string;
 use crate::recording::Recorder;
-use crate::{Execute, Item, PreMatchTypeEnum};
+use crate::types::AsyncMatchFn;
+use crate::{Execute, Item};
 use bytes::{Bytes, BytesMut};
 use genesis_common::{EventSubscription, NotifyEnum, TargetSSHOptions, TaskStatusEnum};
 use genesis_ssh::start_ssh_connect;
+use std::collections::HashMap;
 use std::io::Write;
 use std::iter::once;
 use std::{sync::Arc, time::Duration};
@@ -16,7 +19,7 @@ use tokio::{
     select,
     sync::{mpsc::unbounded_channel, watch, Mutex, RwLock},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use uuid::Uuid;
 
 #[derive(Clone, Default)]
@@ -222,14 +225,17 @@ impl PipeManger {
         out_io: Pipe,
         state_sender: broadcast::Sender<ExecuteState>,
         abort_rc: Receiver<bool>,
+        abort_sc: watch::Sender<bool>,
     ) -> Result<(), String> {
         // step1. receive in data
         let in_abort_rc = abort_rc.clone();
         let in_self = self.clone();
+        let in_abort_sc = abort_sc.clone();
         tokio::spawn(async move {
             in_self
                 .do_process_in(in_abort_rc, out_io.sender, in_io.reader)
-                .await
+                .await;
+            let _ = in_abort_sc.send(true);
         });
         // step2. process ssh server response data
         let out_abort_rc = abort_rc.clone();
@@ -237,7 +243,8 @@ impl PipeManger {
         tokio::spawn(async move {
             out_self
                 .do_process_out(out_abort_rc, in_io.sender, out_io.reader, state_sender)
-                .await
+                .await;
+            let _ = abort_sc.send(true);
         });
         Ok(())
     }
@@ -272,10 +279,11 @@ fn extract_command_after_bell(data: &[u8]) -> Option<&[u8]> {
     None // 如果没有找到包含 \x1b 的行
 }
 
-pub type MatchFnType = Arc<Mutex<dyn Fn(&str) -> bool + Send>>;
+// pub type MatchFnType = Arc<Mutex<dyn Fn(&str) -> bool + Send>>;
 #[derive(Clone)]
 pub struct ExecuteFns {
-    pub fns: Vec<MatchFnType>,
+    // pub fns: Vec<MatchFnType>,
+    pub fns: Vec<AsyncMatchFn>,
     pub execute: Arc<Mutex<Execute>>,
 }
 
@@ -307,6 +315,7 @@ pub struct ProcessManger {
     // run time param
     execute_info: Arc<Mutex<Option<String>>>,
     cmd_expire_time: Arc<Mutex<Option<Instant>>>,
+    global_params: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl ProcessManger {
@@ -324,8 +333,14 @@ impl ProcessManger {
             recorder: Arc::new(Mutex::new(None)),
             cmd_expire_time: Arc::new(Mutex::new(None)),
             execute_info: Arc::new(Mutex::new(None)),
+            global_params: Arc::new(RwLock::new(HashMap::new())),
         })
     }
+
+    async fn insert_global_params(&self, key: String, value: String) {
+        self.global_params.write().await.insert(key, value);
+    }
+
     pub fn with_default_recorder(mut self) -> anyhow::Result<Self> {
         self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
             &self.uniq_id,
@@ -438,8 +453,19 @@ impl ProcessManger {
                                 break ;
                             },
                         },
+                    _ = tokio::time::sleep(Duration::from_secs(3)) => {
+                        match recorder.flush() {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!(session_id=%self.uniq_id,"do_recording flush error: {:?}",e);
+                                    break;
+                                }
+                        }
+                    }
                     rb = receiver.recv() => match rb {
-                        None  => {},
+                        None  => {
+                            self.stop_process();
+                        },
                         Some(bytes)=> {
                             match recorder.write_all(bytes.as_ref()) {
                                 Ok(_) => {},
@@ -454,6 +480,7 @@ impl ProcessManger {
             }
             recorder.close();
         }
+        debug!(session_id=%self.uniq_id,"do_recording end");
     }
     #[allow(dead_code)]
     pub async fn run(
@@ -480,6 +507,7 @@ impl ProcessManger {
                 out_pipe,
                 self.broadcast_sender.clone(),
                 self.abort_rc.clone(),
+                self.get_abort_sc(),
             )
             .await;
         // step5. cmd & recording process
@@ -495,7 +523,7 @@ impl ProcessManger {
                 .map(|s| anyhow::bail!(s))
                 .unwrap_or(anyhow::Ok(TaskStatusEnum::ManualStop))
         } else {
-            let _ = self.abort_sc.send(true);
+            self.stop_process();
             debug!(session_id=%self.uniq_id,"end execute:{}", self.uniq_id);
             anyhow::Ok(TaskStatusEnum::Success)
         }
@@ -516,12 +544,12 @@ impl ProcessManger {
                 flag = abort_execute_cmd.changed() => match flag {
                     Ok(_) => {
                         if *abort_execute_cmd.borrow() {
-                            info!("loop receive abort signal");
+                            debug!(session_id=%self.uniq_id,"loop receive abort signal");
                             return;
                         }
                     },
                     Err(e) => {
-                        info!("loop receive abort signal error: {:?}",e);
+                        debug!(session_id=%self.uniq_id,"loop receive abort signal error: {:?}",e);
                         return
                     }, // 如果接收到错误，也退出
                 },
@@ -530,11 +558,14 @@ impl ProcessManger {
                         let exe = execute.lock().await.clone();
                         let execute_node_info = format!("node[id:{} des:{}]",exe.node.id,exe.node.core.des);
                         let mut cmd = exe.node.core.cmd.clone();
+                        let node_id = exe.node.id.clone();
                         if !cmd.ends_with('\r') {
                             cmd.push('\r');
                         }
+                        // 添加执行参数
+                        self.insert_global_params(format!("node-{}-cmd-input", node_id),cmd.clone()).await;
                         // 发送命令到远程执行
-                        debug!(session_id=%self.uniq_id,"send node:{} cmd:{}", exe.node.id, cmd);
+                        debug!(session_id=%self.uniq_id,"send node:{} cmd:{}", node_id, cmd);
                         let _ = sc.send(cmd.into());
                         // 超时配置校验
                         if exe.node.core.expire > 0 {
@@ -544,9 +575,9 @@ impl ProcessManger {
                         if exe.children.is_empty() {
                             return;
                         }
-                        let execute_fns = do_next_match(exe).await;
+                        let execute_fns = self.do_next_match(exe).await;
                         //存在子节点,等待子节点匹配
-                        if self.cmd_wait_loop(res.clone(),state.clone(),&execute_fns,&cmd_sender).await{
+                        if self.cmd_wait_loop(&node_id,res.clone(),state.clone(),&execute_fns,&cmd_sender).await{
                             // 超时记录
                             self.set_execute_info(format!("execute expired for node:{}",execute_node_info)).await;
                             // 发送停止信号
@@ -555,16 +586,19 @@ impl ProcessManger {
                         }
                     }
                     None => {
+                        self.stop_process();
                         debug!(session_id=%self.uniq_id,"do_cmd_process cmd_executor receive none");
                         break;
                     }
                 }
             }
         }
+        debug!(session_id=%self.uniq_id,"do_cmd_process end");
     }
 
     async fn cmd_wait_loop(
         &self,
+        node_id: &str,
         res: Arc<Mutex<vt100::Parser>>,
         state: Arc<RwLock<PipeState>>,
         execute_fns: &RwLock<Vec<ExecuteFns>>,
@@ -594,7 +628,9 @@ impl ProcessManger {
                     }
                     let content = &res.lock().await.screen().contents(); // 获取屏幕内容
                     debug!(session_id=%self.uniq_id,"receive content: {}", content);
-                    match process_execute_fns(execute_fns, content, cmd_sender, &state).await{
+                    self.insert_global_params(
+                                format!("node-{}-cmd-output",node_id),content.clone()).await;
+                    match self.process_execute_fns(execute_fns, cmd_sender, &state).await{
                         Ok(_) => {
                             debug!(session_id=%self.uniq_id,"time stop loop");
                             break;
@@ -613,7 +649,9 @@ impl ProcessManger {
                             }
                             let content = md.output.clone();
                             debug!(session_id=%self.uniq_id,"receive cmd: {:?}", md);
-                            match process_execute_fns(execute_fns, &content, cmd_sender, &state).await{
+                            self.insert_global_params(
+                                format!("node-{}-cmd-output",node_id),content.clone()).await;
+                            match self.process_execute_fns(execute_fns, cmd_sender, &state).await{
                                 Ok(_) => {
                                     debug!(session_id=%self.uniq_id,"cmd stop loop");
                                     break;
@@ -637,75 +675,76 @@ impl ProcessManger {
         }
         expired
     }
-}
 
-fn item_build(item: Item) -> MatchFnType {
-    match item.match_type {
-        PreMatchTypeEnum::Eq => Arc::new(Mutex::new(move |s: &str| s == item.value)),
-        PreMatchTypeEnum::Reg => Arc::new(Mutex::new(move |s: &str| s == item.value)),
-        PreMatchTypeEnum::Contains => Arc::new(Mutex::new(move |s: &str| {
-            s.to_lowercase().contains(&item.value.to_lowercase())
-        })),
-        PreMatchTypeEnum::NotContains => Arc::new(Mutex::new(move |s: &str| {
-            !s.to_lowercase().contains(&item.value.to_lowercase())
-        })),
-    }
-}
-
-async fn do_next_match(exe: Execute) -> RwLock<Vec<ExecuteFns>> {
-    // children存在,组装出ExecuteFns
-    let mut execute_fns = Vec::new();
-    // 整理子节点
-    for children_node_arc in exe.children {
-        let mm_fn = children_node_arc
-            .lock()
-            .await
-            .clone()
-            .node
-            .pre
-            .map(|pre| pre.list.into_iter().map(item_build).collect())
-            .unwrap_or(vec![]);
-        execute_fns.push(ExecuteFns {
-            fns: mm_fn,
-            execute: children_node_arc,
-        });
-    }
-    RwLock::new(execute_fns)
-}
-
-// 拆分判断所有条件是否满足的函数
-async fn check_conditions(fns: &[MatchFnType], input: &str) -> bool {
-    for ef in fns {
-        let x = ef.lock().await;
-        if !(*x)(input) {
-            return false;
-        }
-    }
-    true
-}
-
-// 拆分匹配并执行的逻辑
-async fn process_execute_fns(
-    execute_fns: &RwLock<Vec<ExecuteFns>>,
-    input: &str,
-    cmd_sender: &UnboundedSender<Arc<Mutex<Execute>>>,
-    state: &RwLock<PipeState>,
-) -> anyhow::Result<()> {
-    let efn = execute_fns.read().await;
-    if efn.is_empty() {
-        return anyhow::Ok(());
-    }
-    for fnn in efn.iter() {
-        if check_conditions(&fnn.fns, input).await {
-            // 发送命令
-            cmd_sender.send(fnn.execute.clone())?;
-            // 更新状态
-            *state.write().await = PipeState::In;
-            // 如果找到匹配的条件，跳出循环
+    async fn process_execute_fns(
+        &self,
+        execute_fns: &RwLock<Vec<ExecuteFns>>,
+        cmd_sender: &UnboundedSender<Arc<Mutex<Execute>>>,
+        state: &RwLock<PipeState>,
+    ) -> anyhow::Result<()> {
+        let efn = execute_fns.read().await;
+        if efn.is_empty() {
             return anyhow::Ok(());
         }
+        for fnn in efn.iter() {
+            if self.check_conditions(&fnn.fns).await {
+                // 发送命令
+                cmd_sender.send(fnn.execute.clone())?;
+                // 更新状态
+                *state.write().await = PipeState::In;
+                // 如果找到匹配的条件，跳出循环
+                return anyhow::Ok(());
+            }
+        }
+        anyhow::bail!("not match any branch")
     }
-    anyhow::bail!("not match any branch")
+
+    fn item_build(&self, node_id: &str, item: Item) -> AsyncMatchFn {
+        string::cmd_string_match(item.match_type, node_id.to_string(), item.value.clone())
+    }
+
+    async fn do_next_match(&self, exe: Execute) -> RwLock<Vec<ExecuteFns>> {
+        // children存在,组装出ExecuteFns
+        let mut execute_fns = Vec::new();
+        // 整理子节点
+        for children_node_arc in exe.children {
+            let mm_fn = children_node_arc
+                .lock()
+                .await
+                .clone()
+                .node
+                .pre
+                .map(|pre| {
+                    pre.list
+                        .into_iter()
+                        .map(|d| self.item_build(&exe.node.id, d))
+                        .collect()
+                })
+                .unwrap_or(vec![]);
+            execute_fns.push(ExecuteFns {
+                fns: mm_fn,
+                execute: children_node_arc,
+            });
+        }
+        RwLock::new(execute_fns)
+    }
+
+    async fn check_conditions(&self, fns: &[AsyncMatchFn]) -> bool {
+        for ef in fns {
+            let x = ef;
+            match (*x)(self.global_params.clone()).await {
+                Ok(v) => match v {
+                    true => continue,
+                    false => return false,
+                },
+                Err(e) => {
+                    error!(session_id=%self.uniq_id,"match item err: {:?}",e);
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -722,9 +761,9 @@ mod tests {
     use super::PipeManger;
     use crate::{Core, Edge, Item, Node, Pipe, Position, Pre};
 
-    use crate::{Graph, InData};
-
     use super::*;
+    use crate::common::em::PreMatchTypeEnum;
+    use crate::{Graph, InData};
     #[tokio::test]
     #[ignore]
     async fn test_graph_building() {
@@ -903,7 +942,13 @@ mod tests {
         let (abort_sc, abort_rc) = watch::channel(false);
         let (scc, _rc) = broadcast::channel(16);
         let new_manager = Arc::new(manager);
-        let ma = new_manager.do_interactive(in_pipe, out_pipe, scc.clone(), abort_rc.clone());
+        let ma = new_manager.do_interactive(
+            in_pipe,
+            out_pipe,
+            scc.clone(),
+            abort_rc.clone(),
+            abort_sc.clone(),
+        );
 
         let a = tokio::spawn(async move {
             let _ = tokio::time::sleep(Duration::from_secs(5)).await;
