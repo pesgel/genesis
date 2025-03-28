@@ -6,21 +6,37 @@ pub use alias::*;
 
 use std::path::Path;
 
-use serde::Deserialize;
-use tracing::info;
-
+use crate::config::Db::Sqlite;
 use crate::error::AppError;
 use crate::util::jwt::JwtConfig;
+use serde::Deserialize;
+use tracing::info;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    #[serde(rename = "mysql")]
-    pub mysql_config: MysqlConfig,
+    #[serde(rename = "db")]
+    pub db_config: Db,
     #[serde(rename = "jwt")]
     pub jwt_config: JwtConfig,
     #[serde(rename = "tracing")]
     pub tracing: Option<TracingConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub enum Db {
+    #[serde(rename = "mysql")]
+    Mysql(MysqlConfig),
+    #[serde(rename = "sqlite")]
+    Sqlite(SqliteConfig),
+}
+
+impl Default for Db {
+    fn default() -> Self {
+        Sqlite(SqliteConfig {
+            path: "db.sqlite".to_string(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -56,6 +72,17 @@ impl MysqlConfig {
         )
     }
 }
+
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SqliteConfig {
+    pub path: String,
+}
+impl SqliteConfig {
+    pub fn connect_url(&self) -> String {
+        format!("sqlite://{}", self.path)
+    }
+}
+
 // parse config
 pub async fn parse_config(path: &Path) -> Result<AppConfig, AppError> {
     // file path

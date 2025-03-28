@@ -1,8 +1,8 @@
 //! runtime pram
 
-use super::AppConfig;
+use super::{AppConfig, Db};
 use lazy_static::lazy_static;
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::{Database, DatabaseConnection, DbErr};
 use std::collections::HashMap;
 use tokio::sync::{watch, RwLock};
 
@@ -18,20 +18,23 @@ pub struct AppState {
     pub conn: DatabaseConnection,
 }
 pub async fn init_shared_app_state(config: &AppConfig) -> Result<AppState, ()> {
-    let mut state = AppState::default();
-    // step1. 构造mysql
-    match Database::connect(config.mysql_config.connect_url()).await {
-        Ok(conn) => {
-            state.conn = conn;
-            tracing::debug!("mysql conn initialized");
-        }
-        Err(e) => {
-            tracing::error!("create db conn error: {:?}", e);
-            return Err(());
-        }
-    }
+    let mut state = AppState {
+        conn: DatabaseConnection::Disconnected,
+    };
+    // step1. db connect
+    state.conn = db_init(config)
+        .await
+        .map_err(|e| format!("init db connect error: {:?}", e))
+        .unwrap();
     let mut sas = SHARED_APP_STATE.write().await;
     *sas = state.clone();
     tracing::debug!("app state initialized");
     Ok(state)
+}
+
+async fn db_init(config: &AppConfig) -> Result<DatabaseConnection, DbErr> {
+    match config.db_config.clone() {
+        Db::Mysql(conf) => Database::connect(conf.connect_url()).await,
+        Db::Sqlite(conf) => Database::connect(conf.connect_url()).await,
+    }
 }

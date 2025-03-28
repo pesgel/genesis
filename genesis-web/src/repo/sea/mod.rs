@@ -223,7 +223,8 @@ fn default_time() -> DateTime<Local> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{init_shared_app_state, AppConfig, AppState};
+    use crate::config::Db::Mysql;
+    use crate::config::{init_shared_app_state, AppConfig, AppState, MysqlConfig};
     use crate::repo::model::user;
     use crate::repo::sea::{instruct, SeaRepo};
     use sea_orm::sea_query::{ConditionExpression, Expr};
@@ -312,15 +313,17 @@ mod tests {
     async fn init_state() -> AppState {
         let mut config = AppConfig {
             server: Default::default(),
-            mysql_config: Default::default(),
+            db_config: Default::default(),
             jwt_config: Default::default(),
             tracing: Default::default(),
         };
-        config.mysql_config.host = "127.0.0.1:13306".to_string();
-        config.mysql_config.database = "genesis".to_string();
-        config.mysql_config.username = "genesis".to_string();
-        config.mysql_config.password = "BmLC89g6".to_string();
-
+        let mysql_config = MysqlConfig {
+            host: "127.0.0.1:13306".to_string(),
+            username: "genesis".to_string(),
+            password: "genesis".to_string(),
+            database: "BmLC89g6".to_string(),
+        };
+        config.db_config = Mysql(mysql_config);
         init_shared_app_state(&config).await.unwrap()
     }
 }

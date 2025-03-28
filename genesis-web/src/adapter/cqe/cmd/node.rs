@@ -10,4 +10,5 @@ pub struct NodeSaveCmd {
     pub port: i32,
     pub account: String,
     pub password: String,
+    pub remark: String,
 }

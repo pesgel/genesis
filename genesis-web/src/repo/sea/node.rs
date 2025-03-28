@@ -25,6 +25,7 @@ impl NodeRepo {
             password: Set(model.password),
             port: Set(model.port),
             account: Set(model.account),
+            remark: Set(model.remark),
             ..Default::default()
         };
         SeaRepo::update_with_default::<node::Entity>(db, active_model).await

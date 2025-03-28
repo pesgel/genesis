@@ -1,3 +1,6 @@
+use crate::adapter::http::handlers::*;
+use crate::adapter::http::middleware::auth::jwt_auth_middle;
+use crate::{adapter::http::handler_ssh, config::AppState};
 use axum::routing::delete;
 use axum::{
     middleware,
@@ -5,10 +8,6 @@ use axum::{
     Json, Router,
 };
 use serde_json::json;
-
-use crate::adapter::http::handlers::*;
-use crate::adapter::http::middleware::auth::jwt_auth_middle;
-use crate::{adapter::http::handler_ssh, config::AppState};
 
 pub async fn routes(state: AppState) -> Router {
     let open_route = Router::new()
@@ -55,6 +54,9 @@ pub async fn routes(state: AppState) -> Router {
 
     Router::new()
         .nest("/api/v1", Router::new().merge(open_route).merge(business))
+        // 静态文件服务
+        // .nest_service("/", get_service(ServeDir::new("./static")))
+        // 捕获所有未匹配路由返回前端入口
         .with_state(state)
 }
 

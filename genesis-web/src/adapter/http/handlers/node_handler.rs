@@ -22,6 +22,7 @@ pub async fn save_node(
     model.port = param.port;
     model.account = param.account;
     model.password = param.password;
+    model.remark = param.remark;
     if let Some(id) = param.id {
         model.id = id;
     }
@@ -41,6 +42,7 @@ pub async fn get_node_by_id(
             host: d.host,
             account: d.account,
             port: d.port,
+            remark: d.remark,
         }))
     })?
 }
@@ -73,6 +75,7 @@ pub async fn list_node(
                         updated_by: d.updated_by,
                         created_at: d.created_at,
                         updated_at: d.updated_at,
+                        remark: d.remark,
                     })
                     .collect(),
             ))))

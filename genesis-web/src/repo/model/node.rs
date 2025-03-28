@@ -16,6 +16,7 @@ pub struct Model {
     pub created_at: chrono::DateTime<Local>,
     pub updated_at: chrono::DateTime<Local>,
     pub deleted: i8,
+    pub remark: String,
 }
 
 impl Model {
