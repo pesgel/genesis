@@ -108,6 +108,7 @@ pub async fn execute_instruct(
 ) -> Result<Json<ResponseSuccess>, AppError> {
     // step1. fetch instruct data
     let ins = InstructRepo::get_instruct_by_id(&state.conn, &data.id).await?;
+    let replaces = serde_json::to_string(&data.replaces)?;
     // replace param
     let new_str = replace_execute_param(ins.data, data.replaces).await?;
     let in_data: InData = serde_json::from_str(&new_str)?;
@@ -138,6 +139,7 @@ pub async fn execute_instruct(
     model.instruct_name = ins.name;
     model.node_id = data.node;
     model.node_name = node.name;
+    model.replaces = replaces;
     let uuid = ExecuteRepo::insert_execute_one(&state.conn, model).await?;
     // step4. execute
     let mut pm = ProcessManger::new(execute_uniq_id.clone(), execute)?.with_recorder_param(

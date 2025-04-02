@@ -21,6 +21,7 @@ pub async fn get_execute_by_id(
         .map(|d| {
             Ok(Json(ExecuteVO {
                 id,
+                replaces: d.replaces,
                 name: d.name,
                 state: d.state,
                 remark: d.remark,
@@ -57,6 +58,7 @@ pub async fn list_execute(
                         remark: d.remark,
                         node_id: d.node_id,
                         node_name: d.node_name,
+                        replaces: d.replaces,
                         instruct_id: d.instruct_id,
                         instruct_name: d.instruct_name,
                         created_by: d.created_by,

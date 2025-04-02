@@ -61,6 +61,7 @@ CREATE TABLE `execute_task`
     `node_id`        varchar(128)    CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci  NOT NULL DEFAULT '' COMMENT '节点ID',
     `node_name`      varchar(128)    CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci  NOT NULL DEFAULT '' COMMENT '节点名快照',
     `state`          int  NOT NULL DEFAULT '0' COMMENT '执行状态',
+    `replaces`       text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci COMMENT '替换参数',
     `remark`         varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci  NOT NULL DEFAULT '' COMMENT '描述',
     `created_by`     varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci   NOT NULL DEFAULT '' COMMENT '创建人',
     `updated_by`     varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci   NOT NULL DEFAULT '' COMMENT '更新人',

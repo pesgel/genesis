@@ -11,6 +11,7 @@ pub struct Model {
     pub node_name: String,
     pub state: i32,
     pub remark: String,
+    pub replaces: String,
     pub instruct_id: String,
     pub instruct_name: String,
     pub created_by: String,
