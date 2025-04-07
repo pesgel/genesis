@@ -1,0 +1,281 @@
+use bytes::{Bytes, BytesMut};
+use std::iter::once;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::select;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::watch::{self, Receiver};
+use tokio::sync::{broadcast, Mutex, RwLock};
+use tracing::{debug, error};
+
+/// cmd execute state enum
+#[derive(Clone)]
+pub enum ExecuteState {
+    /// start with executeId
+    Start(String),
+    /// end with executeId
+    End(String),
+    /// executed with instructId
+    Executed((String, String)),
+    /// Binary data returned by the SSH channel
+    ExecutedBytes(Bytes),
+    /// executed cmd with in/out
+    ExecutedCmd(PipeCmd),
+}
+
+#[derive(Clone, Default)]
+pub enum PipeState {
+    #[default]
+    In,
+    Out,
+}
+#[derive(Clone, Debug, Default)]
+pub struct PipeCmd {
+    pub input: String,
+    pub output: String,
+}
+
+#[derive(Debug)]
+pub struct Pipe {
+    pub sender: UnboundedSender<Bytes>,
+    pub reader: UnboundedReceiver<Bytes>,
+}
+
+impl Pipe {
+    pub fn new(sender: UnboundedSender<Bytes>, reader: UnboundedReceiver<Bytes>) -> Self {
+        Self { sender, reader }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+pub struct PipeManger {
+    pub ps1: Arc<RwLock<String>>,
+    pub parser: Arc<Mutex<vt100::Parser>>,
+    pub state: Arc<RwLock<PipeState>>,
+    pub out_buf: Arc<Mutex<vt100::Parser>>,
+    pub input_buf: Arc<Mutex<vt100::Parser>>,
+    pub wait_times: u8,
+    pub uniq_id: String,
+}
+
+impl PipeManger {
+    pub fn new(wait_times: u8, uniq_id: String) -> Self {
+        Self {
+            wait_times,
+            uniq_id,
+            ps1: Arc::new(Default::default()),
+            parser: Arc::new(Default::default()),
+            state: Arc::new(Default::default()),
+            out_buf: Arc::new(Default::default()),
+            input_buf: Arc::new(Default::default()),
+        }
+    }
+
+    pub async fn do_process_in(
+        &self,
+        mut abort_in_io: Receiver<bool>,
+        out_io_sender: UnboundedSender<Bytes>,
+        mut in_io_reader: UnboundedReceiver<Bytes>,
+    ) {
+        let ps1 = self.ps1.clone();
+        let state = self.state.clone();
+        let wait_times = self.wait_times;
+        loop {
+            select! {
+                flag = abort_in_io.changed() => match flag {
+                    Ok(_) => {
+                        if *abort_in_io.borrow() {
+                            debug!(session_id=%self.uniq_id,"do_process_in receive abort signal");
+                            return ;
+                        }
+                    },
+                    Err(e) => {
+                        error!(session_id=%self.uniq_id,"do_process_in receive abort signal error: {:?}",e);
+                        return ;
+                    },
+                },
+                rb = in_io_reader.recv() => match rb {
+                    Some(data) => {
+                        // 未设置ps1 不允许输入
+                        while ps1.read().await.is_empty() {
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                        }
+                        // 判断输入状态是否是允许输入
+                        let mut now_wait_time = 0;
+                        loop {
+                            match *state.read().await {
+                                PipeState::In => break,
+                                PipeState::Out => {
+                                    tokio::time::sleep(Duration::from_millis(20)).await;
+                                    now_wait_time += 1;
+                                    if now_wait_time >= wait_times {
+                                        debug!(session_id=%self.uniq_id,"do_process_in time out, break");
+                                        break;
+                                    }
+                                },
+                            }
+                        }
+                        let _ = out_io_sender.send(data);
+                    },
+                    None => {
+                        error!(session_id=%self.uniq_id,"do_process_in receive none");
+                        break
+                    },
+                }
+            }
+        }
+    }
+
+    pub async fn do_process_out(
+        &self,
+        mut abort_rc: Receiver<bool>,
+        in_io_sender: UnboundedSender<Bytes>,
+        mut out_io_reader: UnboundedReceiver<Bytes>,
+        state_sender: broadcast::Sender<ExecuteState>,
+    ) {
+        let parser = self.parser.clone();
+        let ps1 = self.ps1.clone();
+        let stat = self.state.clone();
+        let input = self.input_buf.clone();
+        let output = self.out_buf.clone();
+        let mut buffer = BytesMut::new();
+        'ro: loop {
+            select! {
+                rb = out_io_reader.recv() => match rb {
+                    Some(data) => {
+                        // step1. send ssh server data to broadcast
+                        let _ = state_sender.send(ExecuteState::ExecutedBytes(data.clone()));
+                        // step2. remove redundancy data
+                        let parts: Vec<Bytes> = data
+                            .split(|&byte| byte == b'\r')
+                            .flat_map(|part| once(Bytes::copy_from_slice(part)).chain(once(Bytes::from_static(b"\r"))))
+                            .take(data.split(|&byte| byte == b'\r').count() * 2 - 1) // 去掉最后一个多余的 \r
+                            .filter(|e| !e.is_empty())
+                            .collect();
+                        // loop
+                        for data in parts.iter() {
+                            let mut par = parser.lock().await;
+                            par.process(data);
+                            if par.screen().alternate_screen() {
+                                //VIM等界面
+                                continue 'ro;
+                            }
+                            if data.len() ==1 && data[0] == b'\r'{
+                                *(stat.write().await) = PipeState::Out;
+                            }
+                            // 判断当前接受状态,若是输入状态,则写到input
+                            // 若是输出状态,则写入到output
+                            if !ps1.read().await.is_empty() {
+                                match *(stat.read().await) {
+                                    PipeState::In => {
+                                        input.lock().await.process(data);
+                                    },
+                                    PipeState::Out => {
+                                        output.lock().await.process(data);
+                                    },
+                                }
+                            }
+                            buffer.extend_from_slice(data);
+                            if let Some(p1) = extract_command_after_bell(&buffer){
+                                *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
+                                // 打印ps1,并清空
+                                *(stat.write().await) = PipeState::In;
+                                buffer.clear();
+
+                                let mut input = input.lock().await;
+                                let cmd_input = input.screen().contents().trim().to_string();
+                                if cmd_input.is_empty() {
+                                    continue;
+                                }
+                                input.process(b"\x1b[2J");
+                                let mut output = output.lock().await;
+                                let ps1_value = ps1.read().await;
+                                let cmd_out = output.screen().contents().replace(ps1_value.as_str(), "").trim().to_string();
+                                output.process(b"\x1b[2J");
+                                let _ = state_sender.send(ExecuteState::ExecutedCmd(PipeCmd{
+                                    input: cmd_input,
+                                    output: cmd_out,
+                                }));
+                            }
+                        }
+                        // 处理完毕,发送数据
+                        let _ = in_io_sender.send(data);
+                    },
+                    None => {return ;},
+                },
+                flag = abort_rc.changed() => match flag {
+                    Ok(_) => {
+                        if *abort_rc.borrow() {
+                            debug!(session_id=%self.uniq_id,"do_process_out receive abort signal");
+                            return ;
+                        }
+                    },
+                    Err(e) => {
+                        error!(session_id=%self.uniq_id,"do_process_out receive abort signal receive error: {:?}",e);
+                        return ;
+                    },
+                }
+            }
+        }
+    }
+
+    pub async fn do_interactive(
+        self: Arc<Self>,
+        in_io: Pipe,
+        out_io: Pipe,
+        state_sender: broadcast::Sender<ExecuteState>,
+        abort_rc: Receiver<bool>,
+        abort_sc: watch::Sender<bool>,
+    ) -> Result<(), String> {
+        // step1. receive in data
+        let in_abort_rc = abort_rc.clone();
+        let in_self = self.clone();
+        let in_abort_sc = abort_sc.clone();
+        tokio::spawn(async move {
+            in_self
+                .do_process_in(in_abort_rc, out_io.sender, in_io.reader)
+                .await;
+            let _ = in_abort_sc.send(true);
+        });
+        // step2. process ssh server response data
+        let out_abort_rc = abort_rc.clone();
+        let out_self = self.clone();
+        tokio::spawn(async move {
+            out_self
+                .do_process_out(out_abort_rc, in_io.sender, out_io.reader, state_sender)
+                .await;
+            let _ = abort_sc.send(true);
+        });
+        Ok(())
+    }
+}
+
+#[allow(dead_code)]
+fn extract_command_after_bell_back(data: &[u8]) -> Option<&[u8]> {
+    // 查找最后一个 \x1b] 的位置
+    let start_pos = data.windows(2).rposition(|w| w == [0x1b, b']']);
+    // 查找最后一个 \x07 的位置
+    let end_pos = data.iter().rposition(|&b| b == 0x07);
+    if let (Some(start), Some(end)) = (start_pos, end_pos) {
+        // 确保 \x07 出现在 \x1b] 之后
+        if end > start {
+            // 提取 \x07 后面的部分
+            return Some(&data[end + 1..]);
+        }
+    }
+    None
+}
+fn extract_command_after_bell(data: &[u8]) -> Option<&[u8]> {
+    // 将字节流按行拆分
+    let lines: Vec<&[u8]> = data.split(|&b| b == b'\n').collect();
+
+    // 从最后一行开始向前查找，找到包含 \x1b 的行
+    for line in lines.iter().rev() {
+        if line.contains(&0x1b) {
+            // 查找是否包含 \x1b
+            return Some(*line);
+        }
+    }
+    None // 如果没有找到包含 \x1b 的行
+}
