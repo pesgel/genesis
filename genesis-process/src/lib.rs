@@ -2,11 +2,13 @@
 
 mod common;
 mod instruct;
+mod pipe;
 mod process;
 mod recording;
 mod types;
 
 pub use instruct::*;
+pub use pipe::*;
 pub use process::*;
 #[cfg(test)]
 mod tests {
