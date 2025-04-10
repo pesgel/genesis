@@ -594,9 +594,53 @@ impl Drop for RemoteClient {
     }
 }
 
+pub async fn start_ssh_connect_with_state(
+    uuid: Uuid,
+    option: TargetSSHOptions,
+    callback: Option<watch::Sender<bool>>,
+) -> Result<(EventHub<Bytes>, UnboundedSender<Bytes>)> {
+    let (hub, sender, notify) = start_ssh_connect_base(uuid, option, callback).await?;
+    wait_ssh_state(uuid, notify).await?;
+    anyhow::Ok((hub, sender))
+}
+
+async fn wait_ssh_state(
+    uniq_id: Uuid,
+    mut notify: watch::Receiver<NotifyEnum>,
+) -> anyhow::Result<()> {
+    match notify.changed().await {
+        Ok(_) => match *notify.borrow() {
+            NotifyEnum::ERROR(ref e) => {
+                debug!(session_id=%uniq_id,"connect error: {}", e);
+                anyhow::bail!(e.clone());
+            }
+            _ => {
+                debug!(session_id=%uniq_id,"connect success")
+            }
+        },
+        Err(e) => {
+            error!(session_id=%uniq_id,"handler_ssh receive abort signal error: {:?}", e);
+            anyhow::bail!(e.to_string());
+        }
+    };
+    anyhow::Ok(())
+}
+
 pub async fn start_ssh_connect(
     uuid: Uuid,
     option: TargetSSHOptions,
+) -> Result<(
+    EventHub<Bytes>,
+    UnboundedSender<Bytes>,
+    watch::Receiver<NotifyEnum>,
+)> {
+    start_ssh_connect_base(uuid, option, None).await
+}
+
+pub async fn start_ssh_connect_base(
+    uuid: Uuid,
+    option: TargetSSHOptions,
+    callback: Option<watch::Sender<bool>>,
 ) -> Result<(
     EventHub<Bytes>,
     UnboundedSender<Bytes>,
@@ -661,6 +705,19 @@ pub async fn start_ssh_connect(
                     info!("state Connected");
                     let _ = notify_sender.send(NotifyEnum::SUCCESS);
                 }
+                RCEvent::Close(uuid) => {
+                    let id = uuid.to_string();
+                    if let Some(ref cb) = callback {
+                        match cb.send(true) {
+                            Ok(_) => {
+                                debug!(sessionId=%id,"server connect break");
+                            }
+                            Err(_) => {
+                                debug!(sessionId=%id,"server connect break,send close channel error");
+                            }
+                        }
+                    }
+                }
                 _ => {
                     info!("receive event : {:?}", e);
                 }
@@ -671,13 +728,10 @@ pub async fn start_ssh_connect(
 
     tokio::spawn(async move {
         while let Some(e) = rx.recv().await {
-            handle
-                .command_tx
-                .send((
-                    RCCommand::Channel(channel_id, ChannelOperation::Data(e)),
-                    None,
-                ))
-                .unwrap();
+            let _ = handle.command_tx.send((
+                RCCommand::Channel(channel_id, ChannelOperation::Data(e)),
+                None,
+            ));
         }
     });
     anyhow::Ok((hub, tx, notify_receiver.clone()))

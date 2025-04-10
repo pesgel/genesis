@@ -23,7 +23,7 @@ pub async fn jwt_auth_middle(mut req: Request<Body>, next: Next) -> Result<Respo
             req.uri().query().and_then(|query| {
                 query.split('&').find_map(|part| {
                     let (key, value) = part.split_once('=')?;
-                    if key == AUTHORIZATION_KEY {
+                    if key.to_uppercase() == AUTHORIZATION_KEY.to_uppercase() {
                         Some(value)
                     } else {
                         None

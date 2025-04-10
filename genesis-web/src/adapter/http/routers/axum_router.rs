@@ -12,11 +12,11 @@ use serde_json::json;
 pub async fn routes(state: AppState) -> Router {
     let open_route = Router::new()
         .route("/hello", get(hello))
-        .route("/ssh", get(handler_ssh))
         .route("/login", post(user_login))
         .route("/register", post(user_register));
 
     let business = Router::new()
+        .nest("/op", Router::new().route("/ssh", get(handler_ssh)))
         .nest(
             "/instruct",
             Router::new()

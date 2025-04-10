@@ -5,11 +5,13 @@ mod instruct;
 mod pipe;
 mod process;
 mod recording;
+mod ssh;
 mod types;
 
 pub use instruct::*;
 pub use pipe::*;
 pub use process::*;
+pub use ssh::*;
 #[cfg(test)]
 mod tests {
 

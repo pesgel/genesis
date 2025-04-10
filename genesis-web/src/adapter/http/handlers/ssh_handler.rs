@@ -1,169 +1,181 @@
-use core::str;
-use std::time::Duration;
-
 use axum::{
-    body::{Body, Bytes},
+    body::Bytes,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
-    http::StatusCode,
     response::Response,
 };
+use core::str;
 
 use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
-use genesis_common::{EventHub, NotifyEnum, SshTargetPasswordAuth, TargetSSHOptions};
-use genesis_ssh::start_ssh_connect;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use genesis_common::{PtyRequest, SshTargetPasswordAuth, TargetSSHOptions};
+use genesis_process::{ExecuteState, SSHProcessManager};
+use tokio::sync::{broadcast, mpsc::UnboundedSender, watch};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::{common::Envelope, config::AppState};
+use crate::{
+    adapter::cmd::ssh::{ConnParams, SSHConnParams},
+    common::Envelope,
+    config::{AppState, SHARED_APP_CONFIG},
+    error::AppError,
+    repo::sea::NodeRepo,
+};
 
-/// start ssh
-pub async fn handler_ssh(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    info!("hand ssh config: {:?}", state);
-    // TODO 替换为真实获取登录数据的操作
-    // step1. 建立到远程服务的连接并且初始化事件处理器
+pub async fn handler_ssh(
+    ws: WebSocketUpgrade,
+    Query(bq): Query<SSHConnParams>,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    // step1. 构造节点连接数据
+    let query: ConnParams = serde_json::from_str(&bq.params)?;
+    let node_en = NodeRepo::get_node_by_id(&state.conn, &query.opt_permission_id).await?;
     let uuid = Uuid::new_v4();
     let option = TargetSSHOptions {
-        host: "10.0.1.521".into(),
-        port: 22,
-        username: "root".into(),
+        host: node_en.host,
+        port: node_en.port as u16,
+        username: node_en.account,
         allow_insecure_algos: Some(true),
         auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
-            password: "1qaz2wsx".into(),
+            password: node_en.password,
         }),
-        pty_request: Default::default(),
+        pty_request: PtyRequest {
+            term: query.term.clone(),
+            width: query.w,
+            height: query.h,
+        },
     };
-    match start_ssh_connect(uuid, option).await {
-        Ok((hub, xs, mut abort_rc)) => {
-            let (tx, rx) = unbounded_channel::<()>();
-            // step2. 绑定输入输出
-            ws.on_upgrade(move |socket| {
-                let session_id = uuid;
-                async move {
-                    let (sender, receiver) = socket.split();
-                    tokio::spawn(write(session_id, sender, hub, rx));
-                    tokio::spawn(read(session_id, receiver, xs, tx.clone()));
-                    tokio::spawn(async move {
-                        match abort_rc.changed().await {
-                            Ok(_) => match *abort_rc.borrow() {
-                                NotifyEnum::SUCCESS => {}
-                                _ => {
-                                    info!("handler_ssh receive abort signal");
-                                    let _ = tx.send(());
-                                }
-                            },
-                            Err(e) => {
-                                info!("handler_ssh receive abort signal error: {:?}", e);
-                            }
-                        };
-                    });
-                }
-            })
+    // step2. connect
+    let mut ssh_manager = SSHProcessManager::new(uuid).with_recorder_param(
+        &SHARED_APP_CONFIG.read().await.server.recording_path,
+        &query.term,
+        query.h,
+        query.w,
+    )?;
+    let abort_sc = ssh_manager.get_abort_sc();
+    let abort_rc = ssh_manager.get_abort_rc();
+    let (server_sender, xs) = ssh_manager.run(option).await?;
+    let res = ws.on_upgrade(move |socket| {
+        let session_id = uuid;
+        async move {
+            let (sender, receiver) = socket.split();
+            let _ = tokio::join!(
+                write_to_client(session_id, sender, xs),
+                read_to_server(abort_rc, session_id, receiver, server_sender),
+            );
+            let _ = abort_sc.send(true);
         }
-        Err(e) => {
-            error!("create ssh connect error:{}", e);
-            Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::empty())
-                .unwrap()
-        }
-    }
+    });
+    Ok(res)
 }
 
-async fn read(
+async fn read_to_server(
+    mut abort_rc: watch::Receiver<bool>,
     uuid: Uuid,
-    mut receiver: SplitStream<WebSocket>,
+    receiver: SplitStream<WebSocket>,
     sender: UnboundedSender<Bytes>,
-    close: UnboundedSender<()>,
 ) {
     debug!(session_id=%uuid, "start ws receiver");
-    while let Some(Ok(message)) = receiver.next().await {
-        match message {
-            Message::Text(text) => match serde_json::from_str::<Envelope>(&text) {
-                Ok(env) => {
-                    if let Err(err) = sender.send(Bytes::from(env.payload)) {
-                        error!(session_id=%uuid,"convert input to envelope error:{}",err);
-                        break;
+    let mut receiver = receiver.fuse();
+    loop {
+        tokio::select! {
+            ws_msg = receiver.next() => match ws_msg {
+                Some(Ok(message)) => {
+                    match message {
+                        Message::Text(text) => match serde_json::from_str::<Envelope>(&text) {
+                            Ok(env) => {
+                                if let Err(err) = sender.send(Bytes::from(env.payload)) {
+                                    debug!(session_id=%uuid,"convert input to envelope error:{}",err);
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                debug!(session_id=%uuid,"serde deserialize error:{}",err);
+                                break;
+                            }
+                        },
+                        Message::Binary(_) => {
+                            debug!(session_id=%uuid,"binary type is not supported");
+                            break;
+                        }
+                        Message::Close(_) => {
+                            debug!(session_id=%uuid,"client close ws");
+                            break;
+                        }
+                        //ping or pong not process
+                        _ => {}
                     }
-                }
-                Err(err) => {
-                    error!(session_id=%uuid,"serde deserialize error:{}",err);
+                },
+                Some(Err(e)) => {
+                    debug!(session_id=%uuid,"error reading websocket: {e}");
+                    break;
+                },
+                None => {
+                    debug!(session_id=%uuid,"websocket closed");
+                    break;
+                },
+            },
+            _ = abort_rc.changed() => {
+                if *abort_rc.borrow() {
+                    debug!(session_id=%uuid,"received abort");
                     break;
                 }
-            },
-            Message::Binary(_) => {
-                info!(session_id=%uuid,"binary type is not supported");
-                break;
             }
-            Message::Close(_) => {
-                info!(session_id=%uuid,"client close ws");
-                break;
-            }
-            //ping or pong not process
-            _ => {}
         }
     }
-    let _ = close.send(());
     info!(session_id=%uuid,"end ws receiver");
 }
 
-async fn write(
+async fn write_to_client(
     uuid: Uuid,
     mut sender: SplitSink<WebSocket, Message>,
-    hub: EventHub<Bytes>,
-    mut receiver: UnboundedReceiver<()>,
+    mut rec: broadcast::Receiver<ExecuteState>,
 ) {
-    let mut rec = hub.subscribe(|_| true).await;
     loop {
         tokio::select! {
-            b = rec.recv() => match b{
-                Some(bytes) => {
-                    match str::from_utf8(&bytes) {
-                        Ok(data) => {
-                            let x = Envelope {
-                                version: "1.0".into(),
-                                r#type: "r".into(),
-                                payload: data.into(),
-                            };
-                            match serde_json::to_string(&x) {
-                                Ok(st) => {
-                                    if let Err(e) = sender.send(Message::Text(st)).await {
-                                        error!(session_id=%uuid,"error sending message:{}", e);
+            data = rec.recv() => match data{
+                Ok(state) =>  match state {
+                    ExecuteState::ExecutedBytes(bytes) => {
+                        match str::from_utf8(&bytes) {
+                            Ok(data) => {
+                                let x = Envelope {
+                                    version: "1.0".into(),
+                                    r#type: "r".into(),
+                                    payload: data.into(),
+                                };
+                                match serde_json::to_string(&x) {
+                                    Ok(st) => {
+                                        if let Err(e) = sender.send(Message::Text(st)).await {
+                                            error!(session_id=%uuid,"error sending message:{}", e);
+                                            break;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        error!(session_id=%uuid,"serde to string error:{}", e);
                                         break;
-                                    }
-                                },
-                                Err(e) => {
-                                    error!(session_id=%uuid,"serde to string error:{}", e);
-                                    break;
-                                },
-                            };
-                        },
-                        Err(e) => {
-                            error!(session_id=%uuid,"to utf8 string error:{}", e);
-                            break;
-                        },
-                    }
+                                    },
+                                };
+                            },
+                            Err(e) => {
+                                error!(session_id=%uuid,"to utf8 string error:{}", e);
+                                break;
+                            },
+                        }
+                    },
+                    // TODO match other
+                    _ => {
+                    },
                 },
-                None => {
-                    info!(session_id=%uuid,"receive none")
+                Err(e) => {
+                    info!(session_id=%uuid,"receive error: {}",e);
+                    break
                 },
-            },
-            _ = receiver.recv() => {
-                debug!(session_id=%uuid,"receive end");
-                break
-            }
-            _ = tokio::time::sleep(Duration::from_secs(20)) => {
-                debug!(session_id=%uuid,"time sleep end");
-                break
             }
         }
     }
-    let _ = sender.close().await;
-    info!("end ws writer");
+    info!(session_id=%uuid,"end ws writer");
 }

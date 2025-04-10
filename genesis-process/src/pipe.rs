@@ -57,6 +57,7 @@ pub struct PipeManger {
     pub input_buf: Arc<Mutex<vt100::Parser>>,
     pub wait_times: u8,
     pub uniq_id: String,
+    alternate_mode: Arc<RwLock<bool>>,
 }
 
 impl PipeManger {
@@ -69,6 +70,7 @@ impl PipeManger {
             state: Arc::new(Default::default()),
             out_buf: Arc::new(Default::default()),
             input_buf: Arc::new(Default::default()),
+            alternate_mode: Arc::new(RwLock::new(false)),
         }
     }
 
@@ -81,6 +83,7 @@ impl PipeManger {
         let ps1 = self.ps1.clone();
         let state = self.state.clone();
         let wait_times = self.wait_times;
+        let alternate_mode = self.alternate_mode.clone();
         loop {
             select! {
                 flag = abort_in_io.changed() => match flag {
@@ -103,23 +106,26 @@ impl PipeManger {
                         }
                         // 判断输入状态是否是允许输入
                         let mut now_wait_time = 0;
-                        loop {
-                            match *state.read().await {
-                                PipeState::In => break,
-                                PipeState::Out => {
-                                    tokio::time::sleep(Duration::from_millis(20)).await;
-                                    now_wait_time += 1;
-                                    if now_wait_time >= wait_times {
-                                        debug!(session_id=%self.uniq_id,"do_process_in time out, break");
-                                        break;
-                                    }
-                                },
+                        // 不在vim等交互模式
+                        if !*alternate_mode.read().await {
+                            loop {
+                                match *state.read().await {
+                                    PipeState::In => break,
+                                    PipeState::Out => {
+                                        tokio::time::sleep(Duration::from_millis(20)).await;
+                                        now_wait_time += 1;
+                                        if now_wait_time >= wait_times {
+                                            debug!(session_id=%self.uniq_id,"do_process_in time out, break");
+                                            break;
+                                        }
+                                    },
+                                }
                             }
                         }
                         let _ = out_io_sender.send(data);
                     },
                     None => {
-                        error!(session_id=%self.uniq_id,"do_process_in receive none");
+                        debug!(session_id=%self.uniq_id,"do_process_in receive none");
                         break
                     },
                 }
@@ -139,6 +145,7 @@ impl PipeManger {
         let stat = self.state.clone();
         let input = self.input_buf.clone();
         let output = self.out_buf.clone();
+        let alternate_mode = self.alternate_mode.clone();
         let mut buffer = BytesMut::new();
         'ro: loop {
             select! {
@@ -159,6 +166,8 @@ impl PipeManger {
                             par.process(data);
                             if par.screen().alternate_screen() {
                                 //VIM等界面
+                                let mut x = alternate_mode.write().await;
+                                *x = true;
                                 continue 'ro;
                             }
                             if data.len() ==1 && data[0] == b'\r'{
@@ -200,6 +209,8 @@ impl PipeManger {
                             }
                         }
                         // 处理完毕,发送数据
+                        let mut x = alternate_mode.write().await;
+                        *x = false;
                         let _ = in_io_sender.send(data);
                     },
                     None => {return ;},
