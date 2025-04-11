@@ -7,6 +7,7 @@ use axum::{
     response::Response,
 };
 use core::str;
+use std::sync::Arc;
 
 use futures_util::{
     sink::SinkExt,
@@ -14,14 +15,14 @@ use futures_util::{
 };
 use genesis_common::{PtyRequest, SshTargetPasswordAuth, TargetSSHOptions};
 use genesis_process::{ExecuteState, SSHProcessManager};
-use tokio::sync::{broadcast, mpsc::UnboundedSender, watch};
+use tokio::sync::{broadcast, mpsc::UnboundedSender, watch, Mutex};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
     adapter::cmd::ssh::{ConnParams, SSHConnParams},
-    common::Envelope,
-    config::{AppState, SHARED_APP_CONFIG},
+    common::{Envelope, SSHSessionCtx},
+    config::{AppState, GLOBAL_MANAGER, SHARED_APP_CONFIG},
     error::AppError,
     repo::sea::NodeRepo,
 };
@@ -63,11 +64,19 @@ pub async fn handler_ssh(
         let session_id = uuid;
         async move {
             let (sender, receiver) = socket.split();
+            let s_c = SSHSessionCtx::new(session_id).with_on_close(Some(Box::new(move || {
+                let _ = abort_sc.send(true);
+                debug!(session_id=%session_id,"send close session channel")
+            })));
+            let _ = GLOBAL_MANAGER
+                .session_manager
+                .register(session_id, Arc::new(Mutex::new(s_c)))
+                .await;
             let _ = tokio::join!(
                 write_to_client(session_id, sender, xs),
                 read_to_server(abort_rc, session_id, receiver, server_sender),
             );
-            let _ = abort_sc.send(true);
+            let _ = GLOBAL_MANAGER.session_manager.remove(session_id).await;
         }
     });
     Ok(res)

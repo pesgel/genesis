@@ -1,9 +1,12 @@
 //! runtime pram
 
+use crate::common::{MemorySessionManager, SessionManagerTrait};
+
 use super::{AppConfig, Db};
 use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use sea_orm::{Database, DatabaseConnection, DbErr};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{watch, RwLock};
 
 lazy_static! {
@@ -12,6 +15,18 @@ lazy_static! {
     pub static ref EXECUTE_MAP_MANAGER: RwLock<HashMap<String, watch::Sender<bool>>> =
         RwLock::new(HashMap::new());
 }
+
+#[derive(Clone)]
+pub struct GlobalManager {
+    pub session_manager: Arc<dyn SessionManagerTrait + Send + Sync>,
+}
+
+pub static GLOBAL_MANAGER: Lazy<Arc<GlobalManager>> = Lazy::new(|| {
+    // default ssh memory session manager
+    Arc::new(GlobalManager {
+        session_manager: Arc::new(MemorySessionManager::default()),
+    })
+});
 
 #[derive(Debug, Clone, Default)]
 pub struct AppState {
