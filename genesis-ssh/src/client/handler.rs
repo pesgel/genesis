@@ -1,7 +1,6 @@
-use async_trait::async_trait;
 use genesis_common::{SessionId, TargetSSHOptions};
 use russh::client::{Msg, Session};
-use russh::keys::key::PublicKey;
+use russh::keys::PublicKey;
 use russh::Channel;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
@@ -39,7 +38,6 @@ pub enum ClientHandlerError {
     Internal,
 }
 
-#[async_trait]
 impl russh::client::Handler for ClientHandler {
     type Error = ClientHandlerError;
 

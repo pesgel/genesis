@@ -17,8 +17,8 @@ use futures::pin_mut;
 use genesis_common::{EventHub, NotifyEnum};
 use genesis_common::{SSHTargetAuth, SessionId, TargetSSHOptions};
 use handler::ClientHandler;
-use russh::client::Handle;
-use russh::keys::key::PublicKey;
+use russh::client::{AuthResult, Handle};
+use russh::keys::PublicKey;
 use russh::{kex, Preferred, Sig};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch, Mutex};
@@ -450,11 +450,18 @@ impl RemoteClient {
                     let mut auth_result = false;
                     match ssh_options.auth {
                         SSHTargetAuth::Password(auth) => {
-                            auth_result = session
+                            let response = session
                                 .authenticate_password(ssh_options.username.clone(), auth.password)
                                 .await?;
-                            if auth_result {
-                                debug!(username=&ssh_options.username[..], "Authenticated with password");
+
+                            match response {
+                                AuthResult::Success => {
+                                    auth_result = true;
+                                    debug!(username=&ssh_options.username[..], "Authenticated with password");
+                                }
+                                AuthResult::Failure{ .. } => {
+                                    debug!(username=&ssh_options.username[..], "Authenticated with password error");
+                                }
                             }
                         }
                         SSHTargetAuth::PublicKey(_) => {
