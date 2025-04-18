@@ -1,12 +1,14 @@
+use crate::common::EnvelopeType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Envelope {
     pub version: String,
-    pub r#type: String,
+    pub r#type: EnvelopeType,
     pub payload: String,
 }
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageQuery {

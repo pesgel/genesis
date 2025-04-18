@@ -9,16 +9,7 @@ use axum::{
 use core::str;
 use std::sync::Arc;
 
-use futures_util::{
-    sink::SinkExt,
-    stream::{SplitSink, SplitStream, StreamExt},
-};
-use genesis_common::{PtyRequest, SshTargetPasswordAuth, TargetSSHOptions};
-use genesis_process::{ExecuteState, SSHProcessManager};
-use tokio::sync::{broadcast, mpsc::UnboundedSender, watch, Mutex};
-use tracing::{debug, error, info};
-use uuid::Uuid;
-
+use crate::common::EnvelopeType;
 use crate::{
     adapter::cmd::ssh::{ConnParams, SSHConnParams},
     common::{Envelope, SSHSessionCtx},
@@ -26,6 +17,16 @@ use crate::{
     error::AppError,
     repo::sea::NodeRepo,
 };
+use futures_util::{
+    sink::SinkExt,
+    stream::{SplitSink, SplitStream, StreamExt},
+};
+use genesis_common::{PtyRequest, SshTargetPasswordAuth, TargetSSHOptions};
+use genesis_process::{ExecuteState, SSHProcessManager};
+use genesis_ssh::{ChannelOperation, ServerExtraEnum};
+use tokio::sync::{broadcast, mpsc::UnboundedSender, watch, Mutex};
+use tracing::{debug, error, info};
+use uuid::Uuid;
 
 pub async fn handler_ssh(
     ws: WebSocketUpgrade,
@@ -59,7 +60,7 @@ pub async fn handler_ssh(
     )?;
     let abort_sc = ssh_manager.get_abort_sc();
     let abort_rc = ssh_manager.get_abort_rc();
-    let (server_sender, xs) = ssh_manager.run(option).await?;
+    let (server_sender, xs, see) = ssh_manager.run(option).await?;
     let res = ws.on_upgrade(move |socket| {
         let session_id = uuid;
         async move {
@@ -74,7 +75,7 @@ pub async fn handler_ssh(
                 .await;
             let _ = tokio::join!(
                 write_to_client(session_id, sender, xs),
-                read_to_server(abort_rc, session_id, receiver, server_sender),
+                read_to_server(abort_rc, session_id, receiver, server_sender, see),
             );
             let _ = GLOBAL_MANAGER.session_manager.remove(session_id).await;
         }
@@ -87,6 +88,7 @@ async fn read_to_server(
     uuid: Uuid,
     receiver: SplitStream<WebSocket>,
     sender: UnboundedSender<Bytes>,
+    see: UnboundedSender<ServerExtraEnum>,
 ) {
     debug!(session_id=%uuid, "start ws receiver");
     let mut receiver = receiver.fuse();
@@ -96,10 +98,30 @@ async fn read_to_server(
                 Some(Ok(message)) => {
                     match message {
                         Message::Text(text) => match serde_json::from_str::<Envelope>(&text) {
-                            Ok(env) => {
-                                if let Err(err) = sender.send(Bytes::from(env.payload)) {
+                            Ok(env) =>match env.r#type {
+                                EnvelopeType::Raw => {
+                                    if let Err(err) = sender.send(Bytes::from(env.payload)) {
                                     debug!(session_id=%uuid,"convert input to envelope error:{}",err);
                                     break;
+                                }
+                                }
+                                EnvelopeType::WindowSize => {
+                                    let sp = env.payload.split(":").filter_map(|e| e.parse::<u32>().ok()).collect::<Vec<u32>>();
+                                    if sp.len() != 2 {
+                                        debug!(session_id=%uuid,"received windowSize message format error:{}",env.payload);
+                                        continue;
+                                    }
+                                    let _ = see.send(
+                                        ServerExtraEnum::ChannelOperation(ChannelOperation::ResizePty(
+                                                genesis_ssh::PtyRequest{
+                                                 term: "xterm".to_string(),
+                                                col_width: sp[0],
+                                                row_height: sp[1],
+                                                pix_width: 0,
+                                                pix_height: 0,
+                                                modes: vec![],
+                                            })));
+                                    debug!(session_id=%uuid,"received WindowSize message:{}",env.payload);
                                 }
                             }
                             Err(err) => {
@@ -153,7 +175,7 @@ async fn write_to_client(
                             Ok(data) => {
                                 let x = Envelope {
                                     version: "1.0".into(),
-                                    r#type: "r".into(),
+                                    r#type: EnvelopeType::Raw,
                                     payload: data.into(),
                                 };
                                 match serde_json::to_string(&x) {

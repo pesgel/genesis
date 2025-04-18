@@ -605,10 +605,14 @@ pub async fn start_ssh_connect_with_state(
     uuid: Uuid,
     option: TargetSSHOptions,
     callback: Option<watch::Sender<bool>>,
-) -> Result<(EventHub<Bytes>, UnboundedSender<Bytes>)> {
-    let (hub, sender, notify) = start_ssh_connect_base(uuid, option, callback).await?;
+) -> Result<(
+    EventHub<Bytes>,
+    UnboundedSender<Bytes>,
+    UnboundedSender<ServerExtraEnum>,
+)> {
+    let (hub, sender, notify, see) = start_ssh_connect_base(uuid, option, callback).await?;
     wait_ssh_state(uuid, notify).await?;
-    anyhow::Ok((hub, sender))
+    anyhow::Ok((hub, sender, see))
 }
 
 async fn wait_ssh_state(
@@ -641,7 +645,8 @@ pub async fn start_ssh_connect(
     UnboundedSender<Bytes>,
     watch::Receiver<NotifyEnum>,
 )> {
-    start_ssh_connect_base(uuid, option, None).await
+    let (hub, tx, rx, _) = start_ssh_connect_base(uuid, option, None).await?;
+    Ok((hub, tx, rx))
 }
 
 pub async fn start_ssh_connect_base(
@@ -652,6 +657,7 @@ pub async fn start_ssh_connect_base(
     EventHub<Bytes>,
     UnboundedSender<Bytes>,
     watch::Receiver<NotifyEnum>,
+    UnboundedSender<ServerExtraEnum>,
 )> {
     // step1. start connect
     let mut handle = RemoteClient::create(uuid)?;
@@ -732,16 +738,40 @@ pub async fn start_ssh_connect_base(
         }
     });
     let (tx, mut rx) = unbounded_channel();
-
-    tokio::spawn(async move {
-        while let Some(e) = rx.recv().await {
-            let _ = handle.command_tx.send((
-                RCCommand::Channel(channel_id, ChannelOperation::Data(e)),
-                None,
-            ));
+    tokio::spawn({
+        let hc = handle.command_tx.clone();
+        async move {
+            while let Some(e) = rx.recv().await {
+                let _ = hc.send((
+                    RCCommand::Channel(channel_id, ChannelOperation::Data(e)),
+                    None,
+                ));
+            }
         }
     });
-    anyhow::Ok((hub, tx, notify_receiver.clone()))
+
+    let (ses, mut ser) = unbounded_channel();
+    tokio::spawn({
+        let hc = handle.command_tx.clone();
+        async move {
+            while let Some(e) = ser.recv().await {
+                match e {
+                    ServerExtraEnum::Disconnect => {
+                        let _ = hc.send((RCCommand::Disconnect, None));
+                    }
+                    ServerExtraEnum::ChannelOperation(co) => {
+                        let _ = hc.send((RCCommand::Channel(channel_id, co), None));
+                    }
+                }
+            }
+        }
+    });
+    anyhow::Ok((hub, tx, notify_receiver.clone(), ses))
+}
+
+pub enum ServerExtraEnum {
+    Disconnect,
+    ChannelOperation(ChannelOperation),
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use std::{io::Write, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use genesis_common::{EventSubscription, TargetSSHOptions};
-use genesis_ssh::start_ssh_connect_with_state;
+use genesis_ssh::{start_ssh_connect_with_state, ServerExtraEnum};
 use tokio::{
     select,
     sync::{
@@ -139,8 +139,12 @@ impl SSHProcessManager {
     pub async fn run(
         &mut self,
         ssh_option: TargetSSHOptions,
-    ) -> anyhow::Result<(UnboundedSender<Bytes>, broadcast::Receiver<ExecuteState>)> {
-        let (hub, sender) =
+    ) -> anyhow::Result<(
+        UnboundedSender<Bytes>,
+        broadcast::Receiver<ExecuteState>,
+        UnboundedSender<ServerExtraEnum>,
+    )> {
+        let (hub, sender, see) =
             start_ssh_connect_with_state(self.uniq_id, ssh_option, Some(self.get_abort_sc()))
                 .await?;
         // step2. Two-way binary stream copy
@@ -165,6 +169,6 @@ impl SSHProcessManager {
             .await;
         // step5. cmd & recording process
         self.do_recording(hub.subscribe(|_| true).await).await;
-        anyhow::Ok((sc, broadcast_receiver))
+        anyhow::Ok((sc, broadcast_receiver, see))
     }
 }
