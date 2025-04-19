@@ -197,6 +197,9 @@ async fn write_to_client(
                             },
                         }
                     },
+                    ExecuteState::ExecutedCmd(cmd)=>{
+                        debug!(session_id=%uuid,"executed cmd:{:?}",cmd);
+                    }
                     // TODO match other
                     _ => {
                     },

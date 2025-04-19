@@ -7,19 +7,19 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub(crate) fn eq(source: &str, target: &str) -> anyhow::Result<bool> {
-    anyhow::Ok(source == target)
+    anyhow::Ok(source.eq_ignore_ascii_case(target))
 }
 
 pub(crate) fn not_eq(source: &str, target: &str) -> anyhow::Result<bool> {
-    anyhow::Ok(source != target)
+    anyhow::Ok(!source.eq_ignore_ascii_case(target))
 }
 
 pub(crate) fn contains(source: &str, target: &str) -> anyhow::Result<bool> {
-    anyhow::Ok(source.contains(target))
+    anyhow::Ok(source.to_lowercase().contains(&target.to_lowercase()))
 }
 
 pub(crate) fn not_contains(source: &str, target: &str) -> anyhow::Result<bool> {
-    anyhow::Ok(!source.contains(target))
+    anyhow::Ok(!source.to_lowercase().contains(&target.to_lowercase()))
 }
 
 pub(crate) fn regex(source: &str, target: &str) -> anyhow::Result<bool> {

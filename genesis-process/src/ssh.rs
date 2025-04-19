@@ -22,6 +22,7 @@ pub struct SSHProcessManager {
     abort_sc: watch::Sender<bool>,
     abort_rc: watch::Receiver<bool>,
     recorder: Arc<Mutex<Option<Recorder>>>,
+    ps1_char: Vec<char>,
 }
 
 impl SSHProcessManager {
@@ -33,7 +34,12 @@ impl SSHProcessManager {
             abort_rc,
             ssh_cmd_wait_times: 100,
             recorder: Arc::new(Mutex::new(None)),
+            ps1_char: vec!['#', '$', '>'],
         }
+    }
+    pub fn with_ps1_char(&mut self, chars: Vec<char>) -> &mut Self {
+        self.ps1_char = chars;
+        self
     }
     pub fn with_recorder_param(
         mut self,
@@ -153,7 +159,8 @@ impl SSHProcessManager {
         let (psc, _) = unbounded_channel::<Bytes>();
         let in_pipe = Pipe::new(psc, in_rc);
         let out_pipe = Pipe::new(sender, receiver.unbox());
-        let manager = PipeManger::new(self.ssh_cmd_wait_times, self.uniq_id.to_string());
+        let mut manager = PipeManger::new(self.ssh_cmd_wait_times, self.uniq_id.to_string());
+        manager.with_ps1_char(self.ps1_char.clone());
         // step3.start interactive
         let (broadcast_sender, broadcast_receiver) = broadcast::channel::<ExecuteState>(2048);
         let new_manager = Arc::new(manager);

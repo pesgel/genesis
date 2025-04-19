@@ -25,8 +25,8 @@ pub enum ExecuteState {
 
 #[derive(Clone, Default)]
 pub enum PipeState {
-    #[default]
     In,
+    #[default]
     Out,
 }
 #[derive(Clone, Debug, Default)]
@@ -58,9 +58,14 @@ pub struct PipeManger {
     pub wait_times: u8,
     pub uniq_id: String,
     alternate_mode: Arc<RwLock<bool>>,
+    ps1_char: Arc<Vec<char>>,
 }
 
 impl PipeManger {
+    pub fn with_ps1_char(&mut self, chars: Vec<char>) -> &mut Self {
+        self.ps1_char = Arc::new(chars);
+        self
+    }
     pub fn new(wait_times: u8, uniq_id: String) -> Self {
         Self {
             wait_times,
@@ -71,6 +76,7 @@ impl PipeManger {
             out_buf: Arc::new(Default::default()),
             input_buf: Arc::new(Default::default()),
             alternate_mode: Arc::new(RwLock::new(false)),
+            ps1_char: Arc::new(vec!['#', '$', '>']),
         }
     }
 
@@ -122,7 +128,29 @@ impl PipeManger {
                                 }
                             }
                         }
-                        let _ = out_io_sender.send(data);
+                        // 输入数据最后一个字符是\r
+                        if data.last() == Some(&b'\r'){
+                            if data.len() > 1{
+                                let split_index = data.len() - 1;
+                                {
+                                    let before = data.slice(0..split_index);
+                                    *state.write().await = PipeState::In;
+                                    let _ = out_io_sender.send(before);
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                {
+                                    *state.write().await = PipeState::Out;
+                                    let _ = out_io_sender.send(Bytes::from_static(b"\r"));
+                                }
+                            }else{
+                                *state.write().await = PipeState::Out;
+                                let _ = out_io_sender.send(Bytes::from_static(b"\r"));
+                            }
+                        } else {
+                            // 正常处理
+                            *state.write().await = PipeState::In;
+                            let _ = out_io_sender.send(data);
+                        }
                     },
                     None => {
                         debug!(session_id=%self.uniq_id,"do_process_in receive none");
@@ -170,23 +198,18 @@ impl PipeManger {
                                 *x = true;
                                 continue 'ro;
                             }
-                            if data.len() ==1 && data[0] == b'\r'{
-                                *(stat.write().await) = PipeState::Out;
-                            }
                             // 判断当前接受状态,若是输入状态,则写到input
                             // 若是输出状态,则写入到output
-                            if !ps1.read().await.is_empty() {
-                                match *(stat.read().await) {
-                                    PipeState::In => {
-                                        input.lock().await.process(data);
-                                    },
-                                    PipeState::Out => {
-                                        output.lock().await.process(data);
-                                    },
-                                }
+                            match *(stat.read().await) {
+                                PipeState::In => {
+                                    input.lock().await.process(data);
+                                },
+                                PipeState::Out => {
+                                    output.lock().await.process(data);
+                                },
                             }
                             buffer.extend_from_slice(data);
-                            if let Some(p1) = extract_command_after_bell(&buffer){
+                            if let Some(p1) = self.extract_command_after_bell(&buffer){
                                 *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
                                 // 打印ps1,并清空
                                 *(stat.write().await) = PipeState::In;
@@ -194,18 +217,21 @@ impl PipeManger {
 
                                 let mut input = input.lock().await;
                                 let cmd_input = input.screen().contents().trim().to_string();
+                                error!("cmd input:{}",cmd_input);
                                 if cmd_input.is_empty() {
+                                    output.lock().await.process(b"\x1b[2J");
                                     continue;
+                                }else{
+                                    input.process(b"\x1b[2J");
+                                    let mut output = output.lock().await;
+                                    let ps1_value = ps1.read().await;
+                                    let cmd_out = output.screen().contents().replace(ps1_value.as_str(), "").trim().to_string();
+                                    output.process(b"\x1b[2J");
+                                    let _ = state_sender.send(ExecuteState::ExecutedCmd(PipeCmd{
+                                        input: cmd_input,
+                                        output: cmd_out,
+                                    }));
                                 }
-                                input.process(b"\x1b[2J");
-                                let mut output = output.lock().await;
-                                let ps1_value = ps1.read().await;
-                                let cmd_out = output.screen().contents().replace(ps1_value.as_str(), "").trim().to_string();
-                                output.process(b"\x1b[2J");
-                                let _ = state_sender.send(ExecuteState::ExecutedCmd(PipeCmd{
-                                    input: cmd_input,
-                                    output: cmd_out,
-                                }));
                             }
                         }
                         // 处理完毕,发送数据
@@ -230,7 +256,23 @@ impl PipeManger {
             }
         }
     }
+    fn extract_command_after_bell<'a>(&self, data: &'a [u8]) -> Option<&'a [u8]> {
+        let lines = data.split(|&b| b == b'\n');
 
+        for line in lines.rev() {
+            if line.is_empty() || !line.contains(&0x1b) {
+                continue;
+            }
+            let mut parser = vt100::Parser::default();
+            parser.process(line);
+            if let Some(c) = parser.screen().contents().trim().chars().next_back() {
+                if self.ps1_char.contains(&c) {
+                    return Some(line);
+                }
+            }
+        }
+        None
+    }
     pub async fn do_interactive(
         self: Arc<Self>,
         in_io: Pipe,
@@ -276,17 +318,4 @@ fn extract_command_after_bell_back(data: &[u8]) -> Option<&[u8]> {
         }
     }
     None
-}
-fn extract_command_after_bell(data: &[u8]) -> Option<&[u8]> {
-    // 将字节流按行拆分
-    let lines: Vec<&[u8]> = data.split(|&b| b == b'\n').collect();
-
-    // 从最后一行开始向前查找，找到包含 \x1b 的行
-    for line in lines.iter().rev() {
-        if line.contains(&0x1b) {
-            // 查找是否包含 \x1b
-            return Some(*line);
-        }
-    }
-    None // 如果没有找到包含 \x1b 的行
 }
