@@ -32,7 +32,7 @@ impl SSHProcessManager {
             uniq_id,
             abort_sc,
             abort_rc,
-            ssh_cmd_wait_times: 100,
+            ssh_cmd_wait_times: 50,
             recorder: Arc::new(Mutex::new(None)),
             ps1_char: vec!['#', '$', '>'],
         }

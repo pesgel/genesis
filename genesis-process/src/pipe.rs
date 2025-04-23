@@ -1,5 +1,6 @@
 use bytes::{Bytes, BytesMut};
 use std::iter::once;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
@@ -59,6 +60,7 @@ pub struct PipeManger {
     pub uniq_id: String,
     alternate_mode: Arc<RwLock<bool>>,
     ps1_char: Arc<Vec<char>>,
+    counter: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl PipeManger {
@@ -77,6 +79,7 @@ impl PipeManger {
             input_buf: Arc::new(Default::default()),
             alternate_mode: Arc::new(RwLock::new(false)),
             ps1_char: Arc::new(vec!['#', '$', '>']),
+            counter: Arc::new(Default::default()),
         }
     }
 
@@ -122,6 +125,7 @@ impl PipeManger {
                                         now_wait_time += 1;
                                         if now_wait_time >= wait_times {
                                             debug!(session_id=%self.uniq_id,"do_process_in time out, break");
+                                            now_wait_time = 0;
                                             break;
                                         }
                                     },
@@ -130,25 +134,38 @@ impl PipeManger {
                         }
                         // 输入数据最后一个字符是\r
                         if data.last() == Some(&b'\r'){
+                            // 等待命令前字符
+                            while self.counter.load(Ordering::SeqCst) !=0{
+                                tokio::time::sleep(Duration::from_millis(20)).await;
+                                now_wait_time += 1;
+                                if now_wait_time >= wait_times {
+                                    debug!(session_id=%self.uniq_id,"do_process_in counter time out, break");
+                                    break;
+                                }
+                            }
                             if data.len() > 1{
                                 let split_index = data.len() - 1;
                                 {
                                     let before = data.slice(0..split_index);
                                     *state.write().await = PipeState::In;
+                                    self.counter.fetch_add(1, Ordering::SeqCst);
                                     let _ = out_io_sender.send(before);
                                 }
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                                 {
                                     *state.write().await = PipeState::Out;
+                                    self.counter.fetch_add(1, Ordering::SeqCst);
                                     let _ = out_io_sender.send(Bytes::from_static(b"\r"));
                                 }
                             }else{
                                 *state.write().await = PipeState::Out;
+                                self.counter.fetch_add(1, Ordering::SeqCst);
                                 let _ = out_io_sender.send(Bytes::from_static(b"\r"));
                             }
                         } else {
                             // 正常处理
                             *state.write().await = PipeState::In;
+                            self.counter.fetch_add(1, Ordering::SeqCst);
                             let _ = out_io_sender.send(data);
                         }
                     },
@@ -179,6 +196,13 @@ impl PipeManger {
             select! {
                 rb = out_io_reader.recv() => match rb {
                     Some(data) => {
+                        self.counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |x| {
+                            if x > 0 {
+                                Some(x - 1)
+                            } else {
+                                None
+                            }
+                        }).ok();
                         // step1. send ssh server data to broadcast
                         let _ = state_sender.send(ExecuteState::ExecutedBytes(data.clone()));
                         // step2. remove redundancy data
@@ -210,6 +234,7 @@ impl PipeManger {
                             }
                             buffer.extend_from_slice(data);
                             if let Some(p1) = self.extract_command_after_bell(&buffer){
+                                self.counter.store(0,Ordering::SeqCst);
                                 *(ps1.write().await) = String::from_utf8_lossy(p1).to_string();
                                 // 打印ps1,并清空
                                 *(stat.write().await) = PipeState::In;
@@ -217,7 +242,6 @@ impl PipeManger {
 
                                 let mut input = input.lock().await;
                                 let cmd_input = input.screen().contents().trim().to_string();
-                                error!("cmd input:{}",cmd_input);
                                 if cmd_input.is_empty() {
                                     output.lock().await.process(b"\x1b[2J");
                                     continue;
