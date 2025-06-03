@@ -116,8 +116,7 @@ impl io::Write for Recorder {
             return Ok(buf.len());
         }
 
-        self.write_data(&data_str)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        self.write_data(&data_str).map_err(io::Error::other)?;
 
         Ok(buf.len())
     }
@@ -130,7 +129,7 @@ impl io::Write for Recorder {
 fn create_file(path: &Path) -> Result<File> {
     let parent = path
         .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Invalid path"))?;
+        .ok_or_else(|| io::Error::other("Invalid path"))?;
 
     if parent.exists() {
         return Err(

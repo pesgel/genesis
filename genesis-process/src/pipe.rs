@@ -165,7 +165,10 @@ impl PipeManger {
                         } else {
                             // 正常处理
                             *state.write().await = PipeState::In;
-                            self.counter.fetch_add(1, Ordering::SeqCst);
+
+                            if !self.is_cursor_position_report(&data) {
+                                self.counter.fetch_add(1, Ordering::SeqCst);
+                            }
                             let _ = out_io_sender.send(data);
                         }
                     },
@@ -176,6 +179,36 @@ impl PipeManger {
                 }
             }
         }
+    }
+    // 判断是否是上报光标位置二进制
+    fn is_cursor_position_report(&self, buf: &[u8]) -> bool {
+        // 以 ESC + '[' 开头，且以 'R' 结尾
+        if buf.len() < 5 {
+            return false;
+        }
+        if buf[0] != 0x1b || buf[1] != b'[' || buf[buf.len() - 1] != b'R' {
+            return false;
+        }
+
+        // 中间必须包含一个 ';' 且全是 ASCII 数字和分号
+        let middle = &buf[2..buf.len() - 1];
+        let mut has_semicolon = false;
+
+        for &b in middle {
+            match b {
+                b'0'..=b'9' => continue,
+                b';' => {
+                    if has_semicolon {
+                        // 多个 ';' 不符合
+                        return false;
+                    }
+                    has_semicolon = true;
+                }
+                _ => return false,
+            }
+        }
+
+        has_semicolon
     }
 
     pub async fn do_process_out(
