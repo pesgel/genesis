@@ -1,6 +1,7 @@
 //! process
 
 mod common;
+pub mod guacamole;
 mod instruct;
 mod pipe;
 mod process;

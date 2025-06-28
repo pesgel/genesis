@@ -16,7 +16,12 @@ pub async fn routes(state: AppState) -> Router {
         .route("/register", post(user_register));
 
     let business = Router::new()
-        .nest("/op", Router::new().route("/ssh", get(handler_ssh)))
+        .nest(
+            "/op",
+            Router::new()
+                .route("/ssh", get(handler_ssh))
+                .route("/guacamole", get(handler_guacamole)),
+        )
         .nest(
             "/instruct",
             Router::new()
