@@ -680,8 +680,8 @@ pub async fn start_ssh_connect_base(
             channel_id,
             ChannelOperation::RequestPty(crate::PtyRequest {
                 term: option.pty_request.term,
-                col_width: option.pty_request.width as u32,
-                row_height: option.pty_request.height as u32,
+                col_width: option.pty_request.width,
+                row_height: option.pty_request.height,
                 pix_width: 0,
                 pix_height: 0,
                 modes: vec![],

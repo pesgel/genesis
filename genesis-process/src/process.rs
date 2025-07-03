@@ -81,8 +81,8 @@ impl ProcessManger {
         mut self,
         save_path: &str,
         term: &str,
-        height: u8,
-        width: u8,
+        height: u32,
+        width: u32,
     ) -> anyhow::Result<Self> {
         self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
             &self.uniq_id,

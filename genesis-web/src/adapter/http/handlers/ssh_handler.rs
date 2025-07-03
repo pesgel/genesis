@@ -10,12 +10,12 @@ use core::str;
 use std::sync::Arc;
 
 use crate::common::EnvelopeType;
+use crate::repo::sea::CredentialRepo;
 use crate::{
     adapter::cmd::ssh::{ConnParams, SSHConnParams},
     common::{Envelope, SSHSessionCtx},
     config::{AppState, GLOBAL_MANAGER, SHARED_APP_CONFIG},
     error::AppError,
-    repo::sea::NodeRepo,
 };
 use futures_util::{
     sink::SinkExt,
@@ -35,15 +35,17 @@ pub async fn handler_ssh(
 ) -> Result<Response, AppError> {
     // step1. 构造节点连接数据
     let query: ConnParams = serde_json::from_str(&bq.params)?;
-    let node_en = NodeRepo::get_node_by_id(&state.conn, &query.opt_permission_id).await?;
+    let credential =
+        CredentialRepo::get_credential_by_id(&state.conn, &query.permission_id).await?;
+
     let uuid = Uuid::new_v4();
     let option = TargetSSHOptions {
-        host: node_en.host,
-        port: node_en.port as u16,
-        username: node_en.account,
+        host: credential.address,
+        port: credential.port as u16,
+        username: credential.principal,
         allow_insecure_algos: Some(true),
         auth: genesis_common::SSHTargetAuth::Password(SshTargetPasswordAuth {
-            password: node_en.password,
+            password: credential.credential,
         }),
         pty_request: PtyRequest {
             term: query.term.clone(),

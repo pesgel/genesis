@@ -18,8 +18,8 @@ pub struct TargetSSHOptions {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PtyRequest {
     pub term: String,
-    pub width: u8,
-    pub height: u8,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Default for PtyRequest {

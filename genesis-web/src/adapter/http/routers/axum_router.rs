@@ -41,6 +41,24 @@ pub async fn routes(state: AppState) -> Router {
                 .route("/list", post(list_node)),
         )
         .nest(
+            "/asset",
+            Router::new()
+                .route("/:id", get(get_asset_by_id))
+                .route("/:id", delete(delete_asset_by_id))
+                .route("/", post(save_asset))
+                .route("/protocol/list", post(list_asset_protocol))
+                .route("/list", post(list_asset)),
+            //list_asset_protocol
+        )
+        .nest(
+            "/credential",
+            Router::new()
+                .route("/", post(save_credential))
+                .route("/:id", get(get_credential_by_id))
+                .route("/:id", delete(delete_credential_by_id))
+                .route("/list", post(list_asset_credential)),
+        )
+        .nest(
             "/execute",
             Router::new()
                 .route("/:id", get(get_execute_by_id))

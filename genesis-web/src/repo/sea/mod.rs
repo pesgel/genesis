@@ -4,21 +4,33 @@ use chrono::{DateTime, Local};
 pub use instruct::*;
 use sea_orm::sea_query::ConditionExpression;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DbConn, DbErr, EntityTrait, IdenStatic,
-    IntoActiveModel, Order, PaginatorTrait, PrimaryKeyTrait, QueryOrder, Select, SelectModel,
-    Value,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, ConnectionTrait, DbConn, DbErr,
+    EntityTrait, FromQueryResult, IdenStatic, IntoActiveModel, Order, PaginatorTrait,
+    PrimaryKeyTrait, QueryOrder, Select, SelectModel, Statement, Value,
 };
 use sea_orm::{Iterable, QueryFilter};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt::Debug;
 use std::option::Option;
+use tracing::debug;
 
+mod asset;
+mod builder;
+mod credential;
 mod execute;
 mod node;
+mod protocol;
 mod user;
 
+pub use asset::*;
+pub use builder::*;
+pub use credential::*;
 pub use execute::*;
 pub use node::*;
+pub use protocol::*;
 pub use user::*;
+
 pub(crate) struct SeaRepo;
 impl SeaRepo {
     #[allow(dead_code)]
@@ -111,6 +123,59 @@ impl SeaRepo {
         let res = ens.fetch_page(std::cmp::max(pg.0 - 1, 0)).await?;
         Ok((count, res))
     }
+    pub async fn page_with_sql<T>(
+        db: &DbConn,
+        pg: (u64, u64),
+        sql: String,
+        values: Vec<Value>,
+        order_by: Option<String>,
+    ) -> anyhow::Result<(u64, Vec<T>)>
+    where
+        T: FromQueryResult + Send + Unpin + Debug,
+    {
+        let backend = db.get_database_backend();
+
+        // COUNT 查询
+        let count_sql = format!(
+            "SELECT COUNT(*) AS count FROM ({}) AS subquery",
+            sql.clone()
+        );
+        let count_stmt = Statement::from_sql_and_values(backend, &count_sql, values.clone());
+        let count_row = db.query_one(count_stmt).await?;
+        let count = count_row
+            .map(|r| r.try_get::<i64>("", "count").unwrap_or(0))
+            .unwrap_or(0);
+
+        if count == 0 {
+            return Ok((0, vec![]));
+        }
+        // 拼接分页 SQL
+        let full_sql = if let Some(order) = order_by {
+            if sql.to_uppercase().contains("ORDER BY") {
+                sql
+            } else {
+                format!("{} ORDER BY {}", sql, order)
+            }
+        } else {
+            sql
+        };
+        let offset = (pg.0.saturating_sub(1)) * pg.1;
+        let paginated_sql = format!("{} LIMIT {} OFFSET {}", full_sql, pg.1, offset);
+        let query_stmt = Statement::from_sql_and_values(backend, &paginated_sql, values);
+        let rows = db.query_all(query_stmt).await?;
+        let items = rows
+            .into_iter()
+            .filter_map(|row| match T::from_query_result(&row, "") {
+                Ok(v) => Some(v),
+                Err(er) => {
+                    debug!("page with sql err: {:?}", er);
+                    None
+                }
+            })
+            .collect();
+
+        Ok((count as u64, items))
+    }
 
     #[allow(dead_code)]
     pub async fn update_with_default<E>(
@@ -172,6 +237,61 @@ impl SeaRepo {
         }
     }
 
+    pub async fn insert_many_with_default<E, D>(
+        db: &DbConn,
+        data_list: Vec<D>,
+    ) -> anyhow::Result<Vec<String>>
+    where
+        E: EntityTrait,
+        E::Model: IntoActiveModel<E::ActiveModel>,
+        D: Serialize,
+        for<'de> E::Model: Deserialize<'de>,
+        E::ActiveModel: Send,
+    {
+        let mut id_list = Vec::with_capacity(data_list.len());
+        let mut active_models = Vec::with_capacity(data_list.len());
+        for data in data_list {
+            let mut id = String::new();
+            let mut model = E::ActiveModel::from_json(serde_json::to_value(data)?)?;
+            // 遍历所有字段，处理 ID 和时间
+            E::Column::iter().for_each(|e| match e.as_str() {
+                FIELD_ID => match model.get(e) {
+                    ActiveValue::Set(value) => {
+                        if let Value::String(Some(now_id)) = value {
+                            if now_id.is_empty() {
+                                id = default_id();
+                                model.set(e, Value::String(Some(Box::new(id.clone()))));
+                            } else {
+                                id = *now_id;
+                            }
+                        }
+                    }
+                    ActiveValue::Unchanged(value) => {
+                        id = value.to_string();
+                    }
+                    ActiveValue::NotSet => {
+                        id = default_id();
+                        model.set(e, Value::String(Some(Box::new(id.clone()))));
+                    }
+                },
+                FIELD_CREATED_AT | FIELD_UPDATED_AT => {
+                    Self::set_now_time::<E>(&mut model, e);
+                }
+                _ => {}
+            });
+
+            id_list.push(id);
+            active_models.push(model);
+        }
+        // 执行批量插入
+        E::insert_many(active_models)
+            .exec_without_returning(db)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+        Ok(id_list)
+    }
+
     /// Convert to sea_orm model
     #[allow(dead_code)]
     pub fn convert_to_model<E, D>(data: D) -> anyhow::Result<E::Model>
@@ -205,6 +325,106 @@ impl SeaRepo {
                 e,
                 Value::ChronoDateTimeLocal(Some(Box::new(default_time()))),
             ),
+        }
+    }
+    pub async fn update_with_map<E>(
+        db: &DbConn,
+        updates: serde_json::Value,
+        filters: serde_json::Value,
+    ) -> anyhow::Result<u64>
+    where
+        E: EntityTrait,
+        E::Model: Default + IntoActiveModel<E::ActiveModel>,
+        for<'de> <E as EntityTrait>::Model: Deserialize<'de>,
+    {
+        // 解析为 ActiveModel
+        let mut active_model = E::ActiveModel::from_json(updates)?;
+        // 手动设置 updated_at 字段
+        for col in E::Column::iter() {
+            if col.as_str() == FIELD_UPDATED_AT {
+                Self::set_now_time::<E>(&mut active_model, col);
+            }
+        }
+        // 构造过滤条件
+        let mut cond = ::sea_orm::Condition::all();
+
+        if let ::serde_json::Value::Object(filter_map) = filters {
+            for (k, v) in filter_map.into_iter() {
+                if let Some(col) = <E as EntityTrait>::Column::iter().find(|c| c.as_str() == k) {
+                    let expr = match v {
+                        serde_json::Value::String(s) => col.eq(s),
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                col.eq(i)
+                            } else if let Some(f) = n.as_f64() {
+                                col.eq(f)
+                            } else {
+                                continue;
+                            }
+                        }
+                        serde_json::Value::Bool(b) => col.eq(b),
+                        serde_json::Value::Null => col.is_null(),
+                        serde_json::Value::Array(arr) => {
+                            if arr.iter().all(|v| v.is_string()) {
+                                let in_str: Vec<String> = arr
+                                    .into_iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                col.is_in(in_str)
+                            } else if arr.iter().all(|v| v.is_i64()) {
+                                let nums: Vec<i64> =
+                                    arr.into_iter().filter_map(|v| v.as_i64()).collect();
+                                col.is_in(nums)
+                            } else {
+                                continue;
+                            }
+                        }
+                        _ => continue, // 复杂结构暂不支持
+                    };
+                    cond = cond.add(expr);
+                }
+            }
+        }
+
+        let res = E::update_many()
+            .set(active_model)
+            .filter(cond)
+            .exec(db)
+            .await?;
+
+        Ok(res.rows_affected)
+    }
+    #[allow(dead_code)]
+    pub async fn update_with_map_by_id<E>(
+        db: &DbConn,
+        updates: HashMap<String, Value>,
+    ) -> anyhow::Result<E::Model>
+    where
+        E: EntityTrait,
+        E::Model: Default + IntoActiveModel<E::ActiveModel>,
+        <E as EntityTrait>::ActiveModel: Send,
+    {
+        let mut is_update = false;
+        // step1. 生成默认的 Model 和 ActiveModel
+        let model: E::Model = Default::default();
+        // 通过 Default 创建默认模型
+        let mut active_model = model.into_active_model();
+        // step2. 遍历 HashMap，并动态设置字段值
+        E::Column::iter().for_each(|e| {
+            if e.as_str() == FIELD_UPDATED_AT {
+                Self::set_now_time::<E>(&mut active_model, e);
+            } else {
+                if let Some(v) = updates.get(e.as_str()) {
+                    active_model.set(e, v.clone())
+                }
+                is_update = true;
+            }
+        });
+        // step3. 执行更新操作
+        if is_update {
+            Ok(active_model.update(db).await?)
+        } else {
+            anyhow::bail!("no field update")
         }
     }
 }
