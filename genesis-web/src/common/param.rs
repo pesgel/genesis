@@ -27,7 +27,7 @@ impl PageQuery {
             if sort.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 let sort_by = self.sort_by.as_deref().unwrap_or("ASC").to_uppercase();
                 if sort_by == "ASC" || sort_by == "DESC" {
-                    return Some(format!("{} {}", sort, sort_by));
+                    return Some(format!("{sort} {sort_by}"));
                 }
             }
         }

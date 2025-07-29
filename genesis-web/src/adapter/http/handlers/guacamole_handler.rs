@@ -16,7 +16,7 @@ pub async fn handler_guacamole(
 ) -> Result<Response, AppError> {
     // step1. 获取
     let params: GuacamoleParams = serde_json::from_str(&gc.params).map_err(|e| {
-        println!("gua err: {}", e);
+        println!("gua err: {e}");
         AppError::from(e)
     })?;
     let credential =

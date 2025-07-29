@@ -154,7 +154,7 @@ impl SeaRepo {
             if sql.to_uppercase().contains("ORDER BY") {
                 sql
             } else {
-                format!("{} ORDER BY {}", sql, order)
+                format!("{sql} ORDER BY {order}")
             }
         } else {
             sql
@@ -513,19 +513,19 @@ mod tests {
         let x = instruct::InstructRepo::insert_instruct_one(&state.conn, new_instruct).await;
         match x {
             Ok(inserted_record) => {
-                println!("Record inserted: {:?}", inserted_record);
+                println!("Record inserted: {inserted_record:?}");
             }
             Err(e) => {
-                println!("insert error:{:?}", e)
+                println!("insert error:{e:?}")
             }
         }
 
         match instruct::InstructRepo::get_instruct_by_id(&state.conn, "1234").await {
             Ok(m) => {
-                println!("query: {:?}", m)
+                println!("query: {m:?}")
             }
             Err(e) => {
-                println!("error: {:?}", e)
+                println!("error: {e:?}")
             }
         }
     }

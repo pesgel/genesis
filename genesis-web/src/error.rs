@@ -110,7 +110,7 @@ where
             //.map_err(AxumHttpError::JsonRejection)?;
             .map_err(|e| {
                 // 打印详细错误日志
-                eprintln!("Failed to deserialize JSON: {:?}", e);
+                eprintln!("Failed to deserialize JSON: {e:?}");
                 AxumHttpError::JsonRejection(e)
             })?;
         value.validate().map_err(AxumHttpError::ValidationError)?;

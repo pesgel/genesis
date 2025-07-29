@@ -120,7 +120,7 @@ impl fmt::Display for Instruction {
             output += &format!(",{}.{}", arg.len(), arg);
         }
         output += ";";
-        write!(f, "{}", output)
+        write!(f, "{output}")
     }
 }
 

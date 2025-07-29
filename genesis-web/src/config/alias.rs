@@ -39,7 +39,7 @@ pub async fn init_shared_app_state(config: &AppConfig) -> Result<AppState, ()> {
     // step1. db connect
     state.conn = db_init(config)
         .await
-        .map_err(|e| format!("init db connect error: {:?}", e))
+        .map_err(|e| format!("init db connect error: {e:?}"))
         .unwrap();
     let mut sas = SHARED_APP_STATE.write().await;
     *sas = state.clone();

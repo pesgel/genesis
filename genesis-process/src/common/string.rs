@@ -35,7 +35,7 @@ pub fn cmd_string_match(
     Arc::new(move |data: Arc<RwLock<HashMap<String, String>>>| {
         let match_type = match_type.clone();
         let item_value = value.clone();
-        let key = format!("node-{}-cmd-output", node_id);
+        let key = format!("node-{node_id}-cmd-output");
         Box::pin(async move {
             let data_read = data.read().await;
             let s = match data_read.get(&key) {

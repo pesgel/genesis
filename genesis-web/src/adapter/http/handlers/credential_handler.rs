@@ -85,6 +85,6 @@ WHERE
         query.page_query.order_clause(),
     )
     .await?;
-    println!("res {:?}", res);
+    println!("res {res:?}");
     Ok(Json(Response::new_success(ResList::new(res.0, res.1))))
 }

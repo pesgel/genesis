@@ -23,3 +23,6 @@ Cargo.lock
 .idea/*
 .vscode/*
 .DS_Store
+config*.toml
+config*.yaml
+test*

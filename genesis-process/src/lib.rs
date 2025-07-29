@@ -57,18 +57,18 @@ mod tests {
         println!("all1 content:\n{}\n", parser.screen().contents());
         // 获取当前光标所在行
         let cu1 = parser.screen().cursor_position();
-        println!("cu1: {:?}", cu1);
+        println!("cu1: {cu1:?}");
         parser.process(TEST_DATA2);
         println!("all2 content:\n{}\n", parser.screen().contents());
         parser.process(TEST_DATA3);
         println!("all3 content:\n{}\n", parser.screen().contents());
         let cu2 = parser.screen().cursor_position();
-        println!("cu2: {:?}", cu2);
+        println!("cu2: {cu2:?}");
         println!("is line 1 wrapped: {:?}", parser.screen().row_wrapped(1));
         println!("is line 2 wrapped: {:?}", parser.screen().row_wrapped(2));
         parser.process(TEST_DATA4);
         let c4 = parser.screen().contents();
-        println!("all4 content:\n{}\n", c4);
+        println!("all4 content:\n{c4}\n");
         parser.set_size(24, 10);
         parser.process(TEST_DATA5);
 

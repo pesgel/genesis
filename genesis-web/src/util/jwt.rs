@@ -71,7 +71,7 @@ impl Claims {
     pub fn generate_token(&self, jwt_key: &[u8]) -> Result<String, String> {
         let header = Header::new(jsonwebtoken::Algorithm::HS512);
         encode(&header, &self, &EncodingKey::from_secret(jwt_key))
-            .map_err(|e| format!("JWT encoding error: {:?}", e))
+            .map_err(|e| format!("JWT encoding error: {e:?}"))
     }
 }
 

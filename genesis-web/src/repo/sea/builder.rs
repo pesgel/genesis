@@ -18,7 +18,7 @@ impl SqlBuilder {
 
     /// 添加 LIKE 条件（自动添加通配符）
     pub fn and_like(mut self, column: &str, value: &str) -> Self {
-        self.add_condition(column, "LIKE", format!("%{}%", value));
+        self.add_condition(column, "LIKE", format!("%{value}%"));
         self
     }
 
@@ -47,7 +47,7 @@ impl SqlBuilder {
     fn add_condition<T: Into<Value>>(&mut self, column: &str, operator: &str, value: T) {
         let prefix = if self.has_where { "AND" } else { "WHERE" };
         self.sql
-            .push_str(&format!(" {} {} {} ?", prefix, column, operator));
+            .push_str(&format!(" {prefix} {column} {operator} ?"));
         self.params.push(value.into());
         self.has_where = true;
     }

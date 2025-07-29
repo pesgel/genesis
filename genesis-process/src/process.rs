@@ -289,7 +289,7 @@ impl ProcessManger {
                             cmd.push('\r');
                         }
                         // 添加执行参数
-                        self.insert_global_params(format!("node-{}-cmd-input", node_id),cmd.clone()).await;
+                        self.insert_global_params(format!("node-{node_id}-cmd-input"),cmd.clone()).await;
                         // 发送命令到远程执行
                         debug!(session_id=%self.uniq_id,"send node:{} cmd:{}", node_id, cmd);
                         let _ = sc.send(cmd.into());
@@ -305,7 +305,7 @@ impl ProcessManger {
                         //存在子节点,等待子节点匹配
                         if self.cmd_wait_loop(&node_id,res.clone(),state.clone(),&execute_fns,&cmd_sender).await{
                             // 超时记录
-                            self.set_execute_info(format!("execute expired for node:{}",execute_node_info)).await;
+                            self.set_execute_info(format!("execute expired for node:{execute_node_info}")).await;
                             // 发送停止信号
                             self.stop_process();
                             break;
@@ -355,7 +355,7 @@ impl ProcessManger {
                     let content = &res.lock().await.screen().contents(); // 获取屏幕内容
                     debug!(session_id=%self.uniq_id,"receive content: {}", content);
                     self.insert_global_params(
-                                format!("node-{}-cmd-output",node_id),content.clone()).await;
+                                format!("node-{node_id}-cmd-output"),content.clone()).await;
                     match self.process_execute_fns(execute_fns, cmd_sender, &state).await{
                         Ok(_) => {
                             debug!(session_id=%self.uniq_id,"time stop loop");
@@ -376,7 +376,7 @@ impl ProcessManger {
                             let content = md.output.clone();
                             debug!(session_id=%self.uniq_id,"receive cmd: {:?}", md);
                             self.insert_global_params(
-                                format!("node-{}-cmd-output",node_id),content.clone()).await;
+                                format!("node-{node_id}-cmd-output"),content.clone()).await;
                             match self.process_execute_fns(execute_fns, cmd_sender, &state).await{
                                 Ok(_) => {
                                     debug!(session_id=%self.uniq_id,"cmd stop loop");

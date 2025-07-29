@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "genesis-common",
-    "genesis-process", "genesis-ssh",  "genesis-web",
+    "genesis-common", "genesis-crypto",
+    "genesis-process", "genesis-ssh", "genesis-web",
 ]
