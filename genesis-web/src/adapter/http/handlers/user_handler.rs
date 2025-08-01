@@ -16,7 +16,7 @@ pub async fn user_info(
     Extension(ctx): Extension<Context>,
 ) -> Result<Json<Response<UserVO>>, AppError> {
     let user: user::Model = UserRepo::get_user_by_id(&state.conn, &ctx.claims.user_id).await?;
-    Ok(Json(Response::new_success(UserVO {
+    Ok(Json(Response::success(UserVO {
         id: user.id,
         name: user.name,
         username: user.username,
@@ -47,7 +47,7 @@ pub async fn user_login(
         .with_user_id(user.id.clone())
         .generate_token(config.jwt_config.secret.as_bytes())?;
     let user_vo = LoginRes { token };
-    Ok(Json(Response::new_success(user_vo)))
+    Ok(Json(Response::success(user_vo)))
 }
 
 pub async fn user_register(

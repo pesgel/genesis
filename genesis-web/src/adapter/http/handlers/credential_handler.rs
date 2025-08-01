@@ -13,11 +13,11 @@ use axum::Json;
 pub async fn save_credential(
     State(state): State<AppState>,
     AppJson(param): AppJson<CredentialSaveCmd>,
-) -> Result<Json<Response<String>>, AppError> {
+) -> Result<Response<String>, AppError> {
     let model = genesis_common::copy::<_, credential::Model>(&param)?;
     CredentialRepo::save_credential(&state.conn, model)
         .await
-        .map(|id| Ok(Json(Response::new_success(id))))?
+        .map(|id| Ok(Response::success(id)))?
 }
 
 pub async fn get_credential_by_id(
@@ -36,16 +36,16 @@ pub async fn get_credential_by_id(
 pub async fn delete_credential_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     SeaRepo::delete_by_id::<credential::Entity>(&state.conn, &id)
         .await
-        .map(|_| Ok(Json(ResponseSuccess::default())))?
+        .map(|_| Ok(ResponseSuccess::default()))?
 }
 
 pub async fn list_asset_credential(
     State(state): State<AppState>,
     Json(query): Json<CredentialListQuery>,
-) -> Result<Json<Response<ResList<CredentialListItemVO>>>, AppError> {
+) -> Result<ResList<CredentialListItemVO>, AppError> {
     let (sql, values) = sea::SqlBuilder::new(
         r#"
 SELECT
@@ -86,5 +86,5 @@ WHERE
     )
     .await?;
     println!("res {res:?}");
-    Ok(Json(Response::new_success(ResList::new(res.0, res.1))))
+    Ok(ResList::new(res.0, res.1))
 }

@@ -25,7 +25,7 @@ use genesis_process::{Graph, InData, ProcessManger};
 pub async fn save_instruct(
     State(state): State<AppState>,
     AppJson(data): AppJson<InstructSaveCmd>,
-) -> Result<Json<Response<String>>, AppError> {
+) -> Result<Response<String>, AppError> {
     let str = serde_json::to_string(&data.data)?;
     let mut model = instruct::Model::new();
     model.data = str;
@@ -38,7 +38,7 @@ pub async fn save_instruct(
     }
     InstructRepo::save_instruct(&state.conn, model)
         .await
-        .map(|id| Ok(Json(Response::new_success(id))))?
+        .map(|id| Ok(Response::success(id)))?
 }
 pub async fn get_instruct_by_id(
     State(state): State<AppState>,
@@ -62,7 +62,7 @@ pub async fn get_instruct_by_id(
 pub async fn list_instruct(
     State(state): State<AppState>,
     Json(query): Json<InstructListQuery>,
-) -> Result<Json<Response<ResList<InstructVO>>>, AppError> {
+) -> Result<ResList<InstructVO>, AppError> {
     let mut search_option = Vec::new();
     if let Some(name) = query.name {
         if !name.is_empty() {
@@ -74,7 +74,7 @@ pub async fn list_instruct(
     InstructRepo::find_instruct_by(&state.conn, query.page_query.init(), Some(search_option))
         .await
         .map(|list| {
-            Ok(Json(Response::new_success(ResList::new(
+            Ok(ResList::new(
                 list.0,
                 list.1
                     .into_iter()
@@ -89,7 +89,7 @@ pub async fn list_instruct(
                         updated_at: d.updated_at,
                     })
                     .collect(),
-            ))))
+            ))
         })?
 }
 
@@ -105,7 +105,7 @@ pub async fn replace_execute_param(
 pub async fn execute_instruct(
     State(state): State<AppState>,
     AppJson(data): AppJson<InstructExecuteCmd>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     // step1. fetch instruct data
     let ins = InstructRepo::get_instruct_by_id(&state.conn, &data.id).await?;
     let replaces = serde_json::to_string(&data.replaces)?;
@@ -176,14 +176,14 @@ pub async fn execute_instruct(
         .write()
         .await
         .insert(execute_uniq_id, abort_sc);
-    Ok(Json(ResponseSuccess::default()))
+    Ok(ResponseSuccess::default())
 }
 
 /// stop execute task
 pub async fn stop_execute_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     let res = match EXECUTE_MAP_MANAGER.read().await.get(&id) {
         None => {
             let _ = stop_execute_callback(
@@ -199,7 +199,7 @@ pub async fn stop_execute_by_id(
         Some(value) => match value.send(true).map_err(|e| anyhow::anyhow!(e)) {
             Ok(_) => {
                 //EXECUTE_MAP_MANAGER.write().await.remove(&id);
-                Ok(Json(ResponseSuccess::default()))
+                Ok(ResponseSuccess::default())
             }
             Err(e) => stop_execute_callback(&state, id.clone(), e.to_string()).await,
         },
@@ -212,14 +212,14 @@ async fn stop_execute_callback(
     state: &AppState,
     id: String,
     e: String,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     let mut update_model = model::execute::Model::new();
     update_model.id = id;
     update_model.state = TaskStatusEnum::ManualStop as i32;
     update_model.remark = e;
     let res = ExecuteRepo::update_execute_state(&state.conn, update_model).await;
     match res {
-        Ok(_) => Ok(Json(ResponseSuccess::default())),
+        Ok(_) => Ok(ResponseSuccess::default()),
         Err(e) => Err(AppError::MsgError(e.to_string())),
     }
 }
@@ -227,8 +227,8 @@ async fn stop_execute_callback(
 pub async fn delete_instruct_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     SeaRepo::delete_by_id::<instruct::Entity>(&state.conn, &id)
         .await
-        .map(|_| Ok(Json(ResponseSuccess::default())))?
+        .map(|_| Ok(ResponseSuccess::default()))?
 }

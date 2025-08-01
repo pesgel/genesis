@@ -1,6 +1,6 @@
 use crate::adapter::query::execute::ExecuteListQuery;
 use crate::adapter::vo::execute::{ExecuteListItemVO, ExecuteVO};
-use crate::adapter::{ResList, Response, ResponseSuccess};
+use crate::adapter::{ResList, ResponseSuccess};
 use crate::config::{AppState, SHARED_APP_CONFIG};
 use crate::error::AppError;
 use crate::repo::model::execute;
@@ -35,7 +35,7 @@ pub async fn get_execute_by_id(
 pub async fn list_execute(
     State(state): State<AppState>,
     Json(query): Json<ExecuteListQuery>,
-) -> Result<Json<Response<ResList<ExecuteListItemVO>>>, AppError> {
+) -> Result<ResList<ExecuteListItemVO>, AppError> {
     let mut search_option = Vec::new();
     if let Some(name) = query.name {
         if !name.is_empty() {
@@ -47,7 +47,7 @@ pub async fn list_execute(
     ExecuteRepo::find_execute_by(&state.conn, query.page_query.init(), Some(search_option))
         .await
         .map(|list| {
-            Ok(Json(Response::new_success(ResList::new(
+            Ok(ResList::new(
                 list.0,
                 list.1
                     .into_iter()
@@ -67,17 +67,17 @@ pub async fn list_execute(
                         updated_at: d.updated_at,
                     })
                     .collect(),
-            ))))
+            ))
         })?
 }
 
 pub async fn delete_execute_history_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     SeaRepo::delete_by_id::<execute::Entity>(&state.conn, &id)
         .await
-        .map(|_| Ok(Json(ResponseSuccess::default())))?
+        .map(|_| Ok(ResponseSuccess::default()))?
 }
 
 pub async fn execute_recording(Path(id): Path<String>) -> impl IntoResponse {

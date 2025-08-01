@@ -15,7 +15,7 @@ use sea_orm::{ColumnTrait, Condition};
 pub async fn save_node(
     State(state): State<AppState>,
     AppJson(param): AppJson<NodeSaveCmd>,
-) -> Result<Json<Response<String>>, AppError> {
+) -> Result<Response<String>, AppError> {
     let mut model = node::Model::new();
     model.name = param.name;
     model.host = param.host;
@@ -28,7 +28,7 @@ pub async fn save_node(
     }
     NodeRepo::save_node(&state.conn, model)
         .await
-        .map(|id| Ok(Json(Response::new_success(id))))?
+        .map(|id| Ok(Response::success(id)))?
 }
 
 pub async fn get_node_by_id(
@@ -49,7 +49,7 @@ pub async fn get_node_by_id(
 pub async fn list_node(
     State(state): State<AppState>,
     Json(query): Json<NodeListQuery>,
-) -> Result<Json<Response<ResList<NodeListItemVO>>>, AppError> {
+) -> Result<ResList<NodeListItemVO>, AppError> {
     let mut search_option = Vec::new();
     if let Some(name) = query.name {
         if !name.is_empty() {
@@ -61,7 +61,7 @@ pub async fn list_node(
     NodeRepo::find_node_by(&state.conn, query.page_query.init(), Some(search_option))
         .await
         .map(|list| {
-            Ok(Json(Response::new_success(ResList::new(
+            Ok(ResList::new(
                 list.0,
                 list.1
                     .into_iter()
@@ -78,31 +78,31 @@ pub async fn list_node(
                         remark: d.remark,
                     })
                     .collect(),
-            ))))
+            ))
         })?
 }
 // BaseKV
 
 pub async fn node_select_kv_item(
     State(state): State<AppState>,
-) -> Result<Json<Response<Vec<BaseKV>>>, AppError> {
+) -> Result<Response<Vec<BaseKV>>, AppError> {
     NodeRepo::node_select_kv(&state.conn).await.map(|list| {
-        Ok(Json(Response::new_success(
+        Ok(Response::success(
             list.into_iter()
                 .map(|d| BaseKV {
                     key: d.id,
                     value: d.name,
                 })
                 .collect(),
-        )))
+        ))
     })?
 }
 
 pub async fn delete_node_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     SeaRepo::delete_by_id::<node::Entity>(&state.conn, &id)
         .await
-        .map(|_| Ok(Json(ResponseSuccess::default())))?
+        .map(|_| Ok(ResponseSuccess::default()))?
 }

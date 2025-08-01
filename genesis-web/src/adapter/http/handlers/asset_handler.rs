@@ -1,7 +1,7 @@
 use crate::adapter::cmd::asset::AssetSaveCmd;
 use crate::adapter::query::asset::{AssetListQuery, AssetProtocolListQuery};
 use crate::adapter::vo::asset::{AssetListItemVO, AssetProtocolListItemVO, AssetVO};
-use crate::adapter::{ResList, Response, ResponseSuccess};
+use crate::adapter::{ResList, ResponseSuccess};
 use crate::config::AppState;
 use crate::error::{AppError, AppJson};
 use crate::repo::model::{asset, protocol};
@@ -16,7 +16,7 @@ use serde_json::json;
 pub async fn save_asset(
     State(state): State<AppState>,
     AppJson(param): AppJson<AssetSaveCmd>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     let model = genesis_common::copy::<_, asset::Model>(&param)?;
     // step1. save protocol
     let id = AssetRepo::save_asset(&state.conn, model).await?;
@@ -35,7 +35,7 @@ pub async fn save_asset(
         )
         .await?;
     }
-    Ok(Json(ResponseSuccess::default()))
+    Ok(ResponseSuccess::default())
 }
 
 pub async fn get_asset_by_id(
@@ -49,7 +49,7 @@ pub async fn get_asset_by_id(
 pub async fn list_asset(
     State(state): State<AppState>,
     Json(query): Json<AssetListQuery>,
-) -> Result<Json<Response<ResList<AssetListItemVO>>>, AppError> {
+) -> Result<ResList<AssetListItemVO>, AppError> {
     let mut search_option = Vec::new();
     if let Some(name) = query.name {
         if !name.is_empty() {
@@ -88,20 +88,20 @@ pub async fn list_asset(
     AssetRepo::find_asset_by(&state.conn, query.page_query.init(), Some(search_option))
         .await
         .map(|list| {
-            Ok(Json(Response::new_success(ResList::new(
+            Ok(ResList::new(
                 list.0,
                 list.1
                     .into_iter()
                     .map(|d| genesis_common::copy(&d).unwrap_or(AssetListItemVO::default()))
                     .collect(),
-            ))))
+            ))
         })?
 }
 
 pub async fn delete_asset_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<ResponseSuccess>, AppError> {
+) -> Result<ResponseSuccess, AppError> {
     // TODO 关联校验
     SeaRepo::delete_by_id::<asset::Entity>(&state.conn, &id).await?;
     // 删除关联协议数据
@@ -115,13 +115,13 @@ pub async fn delete_asset_by_id(
         }),
     )
     .await
-    .map(|_| Ok(Json(ResponseSuccess::default())))?
+    .map(|_| Ok(ResponseSuccess::default()))?
 }
 
 pub async fn list_asset_protocol(
     State(state): State<AppState>,
     Json(query): Json<AssetProtocolListQuery>,
-) -> Result<Json<Response<ResList<AssetProtocolListItemVO>>>, AppError> {
+) -> Result<ResList<AssetProtocolListItemVO>, AppError> {
     let (sql, values) = sea::SqlBuilder::new(
         r#"
 SELECT
@@ -149,5 +149,5 @@ WHERE
         query.page_query.order_clause(),
     )
     .await?;
-    Ok(Json(Response::new_success(ResList::new(res.0, res.1))))
+    Ok(ResList::new(res.0, res.1))
 }

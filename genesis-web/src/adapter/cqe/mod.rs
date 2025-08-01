@@ -1,3 +1,4 @@
+use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
@@ -5,6 +6,7 @@ pub mod cmd;
 pub mod query;
 pub mod vo;
 
+const RESPONSE_SUCCESS: &str = "success";
 // How we want errors responses to be serialized
 #[derive(Clone, Serialize)]
 pub struct ResponseSuccess {
@@ -16,8 +18,14 @@ impl Default for ResponseSuccess {
     fn default() -> Self {
         Self {
             code: 200,
-            msg: "success".to_string(),
+            msg: RESPONSE_SUCCESS.to_string(),
         }
+    }
+}
+
+impl IntoResponse for ResponseSuccess {
+    fn into_response(self) -> axum::response::Response {
+        axum::Json(self).into_response()
     }
 }
 
@@ -29,6 +37,35 @@ where
     pub code: u16,
     pub msg: String,
     pub data: Option<T>,
+}
+
+impl<T> Response<T>
+where
+    T: Serialize,
+{
+    pub fn success(t: T) -> Response<T> {
+        Self {
+            code: 200,
+            msg: RESPONSE_SUCCESS.to_string(),
+            data: Some(t),
+        }
+    }
+    pub fn failure(msg: String) -> Response<T> {
+        Self {
+            msg,
+            code: 400,
+            data: None,
+        }
+    }
+}
+
+impl<T> IntoResponse for Response<T>
+where
+    T: Serialize,
+{
+    fn into_response(self) -> axum::response::Response {
+        axum::Json(self).into_response()
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -49,23 +86,12 @@ where
     }
 }
 
-impl<T> Response<T>
+impl<T> IntoResponse for ResList<T>
 where
     T: Serialize,
 {
-    pub fn new_success(t: T) -> Response<T> {
-        Self {
-            code: 200,
-            msg: "success".to_string(),
-            data: Some(t),
-        }
-    }
-    pub fn new_failure(msg: String) -> Response<T> {
-        Self {
-            msg,
-            code: 400,
-            data: None,
-        }
+    fn into_response(self) -> axum::response::Response {
+        axum::Json(Response::success(self)).into_response()
     }
 }
 
