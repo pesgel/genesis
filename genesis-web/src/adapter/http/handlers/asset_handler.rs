@@ -12,7 +12,9 @@ use axum::Json;
 use sea_orm::sea_query::ConditionExpression;
 use sea_orm::{ColumnTrait, Condition};
 use serde_json::json;
+use tracing::instrument;
 
+#[instrument(skip(state))]
 pub async fn save_asset(
     State(state): State<AppState>,
     AppJson(param): AppJson<AssetSaveCmd>,
@@ -37,7 +39,7 @@ pub async fn save_asset(
     }
     Ok(ResponseSuccess::default())
 }
-
+#[instrument(skip(state))]
 pub async fn get_asset_by_id(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -46,6 +48,7 @@ pub async fn get_asset_by_id(
         .await
         .map(|d| Ok(Json(genesis_common::copy(&d).unwrap_or(AssetVO::default()))))?
 }
+#[instrument(skip(state))]
 pub async fn list_asset(
     State(state): State<AppState>,
     Json(query): Json<AssetListQuery>,

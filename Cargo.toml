@@ -4,3 +4,17 @@ members = [
     "genesis-common", "genesis-crypto",
     "genesis-process", "genesis-ssh", "genesis-web",
 ]
+
+[workspace.dependencies]
+darling = "0.21.0"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+syn = { version = "2.0.104", features = ["extra-traits"] }
+
+tracing = "0.1.40"
+tracing-appender = "0.2.3"
+tracing-opentelemetry = "0.31.0"
+opentelemetry = "0.30.0"
+opentelemetry_sdk = { version = "0.30.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.30.0", features = ["grpc-tonic"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
