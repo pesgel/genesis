@@ -2,6 +2,7 @@
 
 use std::io::Read;
 
+mod argon;
 mod base64;
 mod blake3;
 mod ed25519;
