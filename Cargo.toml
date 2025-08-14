@@ -6,6 +6,24 @@ members = [
 ]
 
 [workspace.dependencies]
+toml = "0.8.19"
+uuid = "1.11.0"
+anyhow = "1.0.91"
+serde = "1.0.214"
+serde_json = "1.0.132"
+strum = "0.26.3"
+thiserror = "2.0.4"
+chrono = "0.4.38"
+dashmap = "6.1.0"
+once_cell = "1.21.3"
+async-trait = "0.1.83"
+futures-util = "0.3.31"
+lazy_static = "1.5.0"
+futures = "0.3.31"
+tokio = "1.41.0"
+tokio-util = "0.7.13"
+tokio-console = "0.1.13"
+
 darling = "0.21.0"
 proc-macro2 = "1.0.95"
 quote = "1.0.40"
