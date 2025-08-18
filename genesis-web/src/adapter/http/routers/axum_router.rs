@@ -20,6 +20,10 @@ pub async fn routes(state: AppState) -> Router {
 
     let business = Router::new()
         .nest(
+            "/file",
+            Router::new().route("/upload", post(file_stream_upload)),
+        )
+        .nest(
             "/op",
             Router::new()
                 .route("/ssh", get(handler_ssh))
