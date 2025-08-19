@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package types;
+
+message Empty{}
+
+message MemStat {
+  // 总内存字节数
+  uint64 total = 1;
+  // 可用内存字节数
+  uint64 available = 2;
+  // 已使用字节数
+  uint64 used = 3;
+  // 使用百分比
+  float usage = 4;
+  // 所属节点
+  string uniqId = 5;
+}
+
+message CpuStat {
+  // cpu 使用百分比
+  float usage = 1;
+  // 所属节点
+  string uniqId = 2;
+}
+
+message DiskStat {
+  string uniqId = 1;
+  repeated DiskStatItem data = 2;
+}
+
+message DiskStatItem {
+  // 设备名
+  string deviceName = 1;
+  // 总字节数
+  uint64 total = 2;
+  // 使用字节数
+  uint64 used = 3;
+  // 所属节点
+  string uniqId = 4;
+}
+message SystemInfo {
+  MemStat mem = 1;
+  CpuStat cpu = 2;
+  DiskStat disk = 3;
+}

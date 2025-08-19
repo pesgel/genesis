@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "genesis-common", "genesis-crypto", "genesis-crypto",
     "genesis-process", "genesis-ssh", "genesis-web", "genesis-macros"
-]
+, "genesis-api"]
 
 [workspace.dependencies]
 toml = "0.8.19"

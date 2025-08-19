@@ -1,0 +1,22 @@
+[package]
+name = "genesis-api"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[dependencies]
+prost = "0.14.1"
+tonic = "0.14.1"
+tonic-prost = "0.14.1"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+[dev-dependencies]
+[build-dependencies]
+tonic-prost-build = "0.14.1"
+walkdir = "2.5.0"

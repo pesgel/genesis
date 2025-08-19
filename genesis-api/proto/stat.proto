@@ -1,0 +1,8 @@
+syntax = "proto3";
+import "types.proto";
+
+package stat;
+
+service SystemStatService {
+  rpc SystemInfo(types.SystemInfo) returns (types.Empty);
+}
