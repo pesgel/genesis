@@ -1,0 +1,45 @@
+syntax = "proto3";
+import "types.proto";
+
+package auth;
+
+service ResourceAuthService {
+  // 资源认证接口
+  rpc ResourceAuth(ResourceAuthReq) returns (ResourceAuthRes){};
+}
+
+message ResourceAuthReq {
+  // 身份标记
+  string identity = 1;
+  // 身份类型
+  string ideType = 2;
+  // 鉴权标记
+  string voucher = 3;
+  // 来源
+  string sourceNode = 4;
+}
+
+message ResourceAuthRes {
+  // true 为有权限 false为无权限
+  bool auth = 1;
+  oneof Data {
+    SshResourceV1 ssh = 2;
+  }
+}
+
+message SshResourceV1 {
+  // 具体值ID
+  string id = 1;
+  // ssh地址
+  string addr = 2;
+  // ssh端口
+  string port = 3;
+  // ssh登陆用户名
+  string username = 4;
+  // ssh登陆密码
+  string password = 5;
+  // 反向代理节点唯一标识
+  string reverseTag = 6;
+  // 操作系统
+  string os = 7;
+}

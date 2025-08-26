@@ -13,7 +13,7 @@ path = "src/server.rs"
 
 [dependencies]
 prost = "0.14.1"
-tonic = "0.14.1"
+tonic = { version = "0.14.1", features = ["_tls-any", ] }
 tonic-prost = "0.14.1"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 [dev-dependencies]

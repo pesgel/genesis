@@ -4,7 +4,23 @@ package types;
 
 message Empty{}
 
-message MemStat {
+message UserInfo{
+  string userId = 1;
+  string userName = 2;
+}
+
+
+// 系统统计数据
+message SystemMetrics {
+  // 内存占用
+  MemMetrics mem = 1;
+  // cpu占用
+  CpuMetrics cpu = 2;
+  // 磁盘占用
+  DiskMetrics disk = 3;
+}
+// 内存占用详细数据
+message MemMetrics {
   // 总内存字节数
   uint64 total = 1;
   // 可用内存字节数
@@ -13,34 +29,22 @@ message MemStat {
   uint64 used = 3;
   // 使用百分比
   float usage = 4;
-  // 所属节点
-  string uniqId = 5;
 }
 
-message CpuStat {
+message CpuMetrics {
   // cpu 使用百分比
   float usage = 1;
-  // 所属节点
-  string uniqId = 2;
 }
 
-message DiskStat {
-  string uniqId = 1;
-  repeated DiskStatItem data = 2;
+message DiskMetrics {
+  repeated DiskMetricsItem data = 2;
 }
 
-message DiskStatItem {
-  // 设备名
-  string deviceName = 1;
+message DiskMetricsItem {
+  // 设备
+  string device = 1;
   // 总字节数
   uint64 total = 2;
   // 使用字节数
   uint64 used = 3;
-  // 所属节点
-  string uniqId = 4;
-}
-message SystemInfo {
-  MemStat mem = 1;
-  CpuStat cpu = 2;
-  DiskStat disk = 3;
 }

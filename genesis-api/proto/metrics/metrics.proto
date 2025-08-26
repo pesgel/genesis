@@ -1,0 +1,13 @@
+syntax = "proto3";
+import "types.proto";
+
+package metrics;
+
+service MetricsService {
+  rpc SystemMetrics(NodeSystemMetrics) returns (types.Empty);
+}
+
+message NodeSystemMetrics{
+  string uniqId = 1;
+  types.SystemMetrics metrics = 2;
+}

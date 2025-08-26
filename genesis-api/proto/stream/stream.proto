@@ -1,0 +1,33 @@
+syntax = "proto3";
+import "types.proto";
+
+package stream;
+
+// 节点操作
+service NodeStream {
+  rpc InventoryStream(stream NodeUpStream) returns (stream NodeDownstream);
+}
+
+message NodeUpStream {
+  oneof Data {
+    NodeInfo nodeAgent = 1;
+  }
+}
+
+message NodeDownstream {
+  oneof Data{
+    SessionKill sessionKill = 1;
+  }
+}
+
+message NodeInfo {
+  string uniqId = 1;
+  string hostname = 2;
+  // register、ping
+  string upType = 3;
+}
+
+message SessionKill {
+  string sessionId = 1;
+  string remark = 2;
+}
