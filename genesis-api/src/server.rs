@@ -18,7 +18,7 @@ impl MetricsService for MyServer {
         request: Request<NodeSystemMetrics>,
     ) -> Result<Response<Empty>, Status> {
         let x = request.get_ref();
-        println!("Got system metrics: {:?}", x);
+        println!("Got system metrics:{x:?}");
         Ok(Response::new(Empty {}))
     }
 }
