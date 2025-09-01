@@ -14,3 +14,6 @@ parquet = "56.1.0"
 datafusion = { version = "49.0.2", features = ["serde"] }
 polars = { version = "0.50.0", features = ["parquet", "timezones", "sql", "lazy"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "rt", "macros"] }
+clap = { workspace = true, features = ["derive"] }
+reedline-repl-rs = { version = "1.2.1", features = ["async", "derive", "async_derive"] }
+enum_dispatch = "0.3.13"

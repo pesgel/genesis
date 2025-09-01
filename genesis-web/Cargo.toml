@@ -6,7 +6,7 @@ license = "Apache-2.0"
 [dependencies]
 jsonwebtoken = "9.3.0"
 axum = { version = "0.7.7", features = ["ws", "macros", "multipart"] }
-clap = { version = "4.5.20", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
 validator = { version = "0.19.0", features = ["derive"] }
 sea-orm = { version = "1.1.7", features = ["debug-print", "runtime-tokio-native-tls", "sqlx-mysql", "sqlx-sqlite"] }
 serde = { workspace = true, features = ["derive"] }
