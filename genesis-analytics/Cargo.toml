@@ -17,3 +17,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "rt", "macros"] }
 clap = { workspace = true, features = ["derive"] }
 reedline-repl-rs = { version = "1.2.1", features = ["async", "derive", "async_derive"] }
 enum_dispatch = "0.3.13"
+winnow = "0.7.13"
+
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["html_reports"] }
+[[bench]]
+name = "benchmark"
+harness = false
