@@ -5,7 +5,7 @@ pub enum SshClientError {
     #[error("mpsc error")]
     MpscError,
     #[error("russh error: {0}")]
-    Russh(#[from] russh::Error),
+    RuSsh(#[from] russh::Error),
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
     #[error(transparent)]

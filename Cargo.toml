@@ -38,3 +38,4 @@ opentelemetry-otlp = { version = "0.30.0", features = ["grpc-tonic"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 clap = { version = "4.5.20" }
 criterion = "0.7.0"
+bytes = "1.10.1"
