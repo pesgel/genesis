@@ -7,6 +7,7 @@ use tokio::select;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch::{self, Receiver};
 use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 /// cmd execute state enum
@@ -85,7 +86,7 @@ impl PipeManger {
 
     pub async fn do_process_in(
         &self,
-        mut abort_in_io: Receiver<bool>,
+        ctx: CancellationToken,
         out_io_sender: UnboundedSender<Bytes>,
         mut in_io_reader: UnboundedReceiver<Bytes>,
     ) {
@@ -95,18 +96,10 @@ impl PipeManger {
         let alternate_mode = self.alternate_mode.clone();
         loop {
             select! {
-                flag = abort_in_io.changed() => match flag {
-                    Ok(_) => {
-                        if *abort_in_io.borrow() {
-                            debug!(session_id=%self.uniq_id,"do_process_in receive abort signal");
-                            return ;
-                        }
-                    },
-                    Err(e) => {
-                        error!(session_id=%self.uniq_id,"do_process_in receive abort signal error: {:?}",e);
-                        return ;
-                    },
-                },
+                _ = ctx.cancelled() => {
+                    debug!(session_id=%self.uniq_id,"do_process_in receive abort signal");
+                    return ;
+                }
                 rb = in_io_reader.recv() => match rb {
                     Some(data) => {
                         // 未设置ps1 不允许输入
@@ -213,7 +206,7 @@ impl PipeManger {
 
     pub async fn do_process_out(
         &self,
-        mut abort_rc: Receiver<bool>,
+        ctx: CancellationToken,
         in_io_sender: UnboundedSender<Bytes>,
         mut out_io_reader: UnboundedReceiver<Bytes>,
         state_sender: broadcast::Sender<ExecuteState>,
@@ -298,17 +291,9 @@ impl PipeManger {
                     },
                     None => {return ;},
                 },
-                flag = abort_rc.changed() => match flag {
-                    Ok(_) => {
-                        if *abort_rc.borrow() {
-                            debug!(session_id=%self.uniq_id,"do_process_out receive abort signal");
-                            return ;
-                        }
-                    },
-                    Err(e) => {
-                        error!(session_id=%self.uniq_id,"do_process_out receive abort signal receive error: {:?}",e);
-                        return ;
-                    },
+                _ = ctx.cancelled() => {
+                    debug!(session_id=%self.uniq_id,"do_process_out receive abort signal");
+                    return ;
                 }
             }
         }
@@ -335,27 +320,23 @@ impl PipeManger {
         in_io: Pipe,
         out_io: Pipe,
         state_sender: broadcast::Sender<ExecuteState>,
-        abort_rc: Receiver<bool>,
-        abort_sc: watch::Sender<bool>,
+        ctx: CancellationToken,
     ) -> Result<(), String> {
         // step1. receive in data
-        let in_abort_rc = abort_rc.clone();
         let in_self = self.clone();
-        let in_abort_sc = abort_sc.clone();
+        let dpi_ctx = ctx.clone();
         tokio::spawn(async move {
             in_self
-                .do_process_in(in_abort_rc, out_io.sender, in_io.reader)
+                .do_process_in(dpi_ctx, out_io.sender, in_io.reader)
                 .await;
-            let _ = in_abort_sc.send(true);
         });
         // step2. process ssh server response data
-        let out_abort_rc = abort_rc.clone();
         let out_self = self.clone();
+        let dpo_ctx = ctx.clone();
         tokio::spawn(async move {
             out_self
-                .do_process_out(out_abort_rc, in_io.sender, out_io.reader, state_sender)
+                .do_process_out(dpo_ctx, in_io.sender, out_io.reader, state_sender)
                 .await;
-            let _ = abort_sc.send(true);
         });
         Ok(())
     }

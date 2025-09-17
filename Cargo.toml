@@ -39,3 +39,6 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 clap = { version = "4.5.20" }
 criterion = "0.7.0"
 bytes = "1.10.1"
+base64 = "0.22.1"
+regex = "1.11.2"
+derive_builder = "0.20.2"

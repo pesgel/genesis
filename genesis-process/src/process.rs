@@ -1,7 +1,7 @@
 //! process
 
 use crate::common::string;
-use crate::recording::Recorder;
+use crate::recording::{Recorder, RecorderBuilder};
 use crate::types::AsyncMatchFn;
 use crate::{Execute, ExecuteState, Item, Pipe, PipeManger, PipeState};
 use bytes::Bytes;
@@ -17,6 +17,7 @@ use tokio::{
     select,
     sync::{mpsc::unbounded_channel, watch, Mutex, RwLock},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use uuid::Uuid;
 
@@ -42,6 +43,7 @@ pub struct ProcessManger {
     execute_info: Arc<Mutex<Option<String>>>,
     cmd_expire_time: Arc<Mutex<Option<Instant>>>,
     global_params: Arc<RwLock<HashMap<String, String>>>,
+    ctx: CancellationToken,
 }
 
 impl ProcessManger {
@@ -60,6 +62,7 @@ impl ProcessManger {
             cmd_expire_time: Arc::new(Mutex::new(None)),
             execute_info: Arc::new(Mutex::new(None)),
             global_params: Arc::new(RwLock::new(HashMap::new())),
+            ctx: CancellationToken::new(),
         })
     }
 
@@ -67,16 +70,6 @@ impl ProcessManger {
         self.global_params.write().await.insert(key, value);
     }
 
-    pub fn with_default_recorder(mut self) -> anyhow::Result<Self> {
-        self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
-            &self.uniq_id,
-            "./",
-            "xterm",
-            80,
-            40,
-        )?)));
-        anyhow::Ok(self)
-    }
     pub fn with_recorder_param(
         mut self,
         save_path: &str,
@@ -84,13 +77,14 @@ impl ProcessManger {
         height: u32,
         width: u32,
     ) -> anyhow::Result<Self> {
-        self.recorder = Arc::new(Mutex::new(Some(Recorder::new(
-            &self.uniq_id,
-            save_path,
-            term,
-            height,
-            width,
-        )?)));
+        let recorder = RecorderBuilder::default()
+            .uniq(&self.uniq_id)
+            .path(save_path)
+            .term(term)
+            .height(height)
+            .width(width)
+            .build()?;
+        self.recorder = Arc::new(Mutex::new(Some(recorder)));
         anyhow::Ok(self)
     }
 
@@ -232,8 +226,7 @@ impl ProcessManger {
                 in_pipe,
                 out_pipe,
                 self.broadcast_sender.clone(),
-                self.abort_rc.clone(),
-                self.get_abort_sc(),
+                self.ctx.clone(),
             )
             .await;
         // step5. cmd & recording process
@@ -663,18 +656,12 @@ mod tests {
 
         let in_pipe = Pipe::new(psc, in_rc);
         let out_pipe = Pipe::new(sender, receiver.unbox());
-
+        let ctx = CancellationToken::new();
         let manager = PipeManger::default();
         let (abort_sc, abort_rc) = watch::channel(false);
         let (scc, _rc) = broadcast::channel(16);
         let new_manager = Arc::new(manager);
-        let ma = new_manager.do_interactive(
-            in_pipe,
-            out_pipe,
-            scc.clone(),
-            abort_rc.clone(),
-            abort_sc.clone(),
-        );
+        let ma = new_manager.do_interactive(in_pipe, out_pipe, scc.clone(), ctx);
 
         let a = tokio::spawn(async move {
             let _ = tokio::time::sleep(Duration::from_secs(5)).await;

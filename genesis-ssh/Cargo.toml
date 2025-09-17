@@ -13,5 +13,6 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
 tracing-subscriber = { workspace = true }
+tokio-util = { workspace = true }
 tokio = { workspace = true, features = ["tracing", "signal", "io-std", "bytes"] }
 genesis-common = { version = "*", path = "../genesis-common" }

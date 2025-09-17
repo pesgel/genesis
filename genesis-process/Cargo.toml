@@ -4,21 +4,24 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 [dependencies]
-uuid = "1.11.0"
-tracing = "0.1.40"
-tokio = { version = "1.41.0", features = ["tracing", "signal", "io-std"] }
-vt100 = "0.15.2"
-bytes = "1.8.0"
-tracing-subscriber = "0.3.18"
-futures-util = "0.3.31"
-anyhow = "1.0.91"
-serde = { version = "1.0.214", features = ["derive"] }
-serde_json = "1.0.132"
-validator = { version = "0.19.0", features = ["derive"] }
-futures = "0.3.31"
-regex = "1.11.1"
-base64 = "0.22.1"
+uuid = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["tracing", "signal", "io-std"] }
+bytes = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures-util = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+futures = { workspace = true }
+regex = { workspace = true }
+base64 = { workspace = true }
+tokio-util = { workspace = true }
+thiserror = { workspace = true }
+derive_builder = { workspace = true }
 
+vt100 = "0.16.2"
+validator = { version = "0.20.0", features = ["derive"] }
 [dependencies.genesis-ssh]
 path = "../genesis-ssh"
 

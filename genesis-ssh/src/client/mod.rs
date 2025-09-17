@@ -23,6 +23,7 @@ use russh::{kex, Preferred, Sig};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::*;
 use uuid::Uuid;
 
@@ -604,13 +605,13 @@ impl Drop for RemoteClient {
 pub async fn start_ssh_connect_with_state(
     uuid: Uuid,
     option: TargetSSHOptions,
-    callback: Option<watch::Sender<bool>>,
+    ctx: Option<CancellationToken>,
 ) -> Result<(
     EventHub<Bytes>,
     UnboundedSender<Bytes>,
     UnboundedSender<ServerExtraEnum>,
 )> {
-    let (hub, sender, notify, see) = start_ssh_connect_base(uuid, option, callback).await?;
+    let (hub, sender, notify, see) = start_ssh_connect_base(uuid, option, ctx).await?;
     wait_ssh_state(uuid, notify).await?;
     anyhow::Ok((hub, sender, see))
 }
@@ -652,7 +653,7 @@ pub async fn start_ssh_connect(
 pub async fn start_ssh_connect_base(
     uuid: Uuid,
     option: TargetSSHOptions,
-    callback: Option<watch::Sender<bool>>,
+    ctx: Option<CancellationToken>,
 ) -> Result<(
     EventHub<Bytes>,
     UnboundedSender<Bytes>,
@@ -720,14 +721,10 @@ pub async fn start_ssh_connect_base(
                 }
                 RCEvent::Close(uuid) => {
                     let id = uuid.to_string();
-                    if let Some(ref cb) = callback {
-                        match cb.send(true) {
-                            Ok(_) => {
-                                debug!(sessionId=%id,"server connect break");
-                            }
-                            Err(_) => {
-                                debug!(sessionId=%id,"server connect break,send close channel error");
-                            }
+                    if let Some(ref ctx) = ctx {
+                        if !ctx.is_cancelled() {
+                            debug!(sessionId=%id,"server connect break");
+                            ctx.cancelled().await;
                         }
                     }
                 }

@@ -1,14 +1,22 @@
 use anyhow::{Context, Result};
+use bytes::Bytes;
+use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::select;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error};
 
 pub const RECORDING_CAST: &str = "recording.cast";
 pub const SSH_KIND: &str = "ssh";
 
-#[derive(Debug, Serialize, Deserialize)]
+const DEFAULT_SHELL: &str = "/bin/bash";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Env {
     #[serde(rename = "SHELL")]
     shell: String,
@@ -16,65 +24,70 @@ struct Env {
     term: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl Env {
+    fn new(shell: impl Into<String>, term: impl Into<String>) -> Self {
+        Self {
+            shell: shell.into(),
+            term: term.into(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Builder, Deserialize)]
+#[builder(setter(into))]
 struct Header {
-    title: String,
-    version: u8,
-    height: u32,
-    width: u32,
     env: Env,
+    width: u32,
+    height: u32,
+    version: u8,
     #[serde(rename = "Timestamp")]
     timestamp: i64,
 }
 
+#[derive(Debug, Builder)]
+#[builder(build_fn(private, name = "private_build"))]
+#[builder(setter(into))]
 pub struct Recorder {
-    file: Option<File>,
+    uniq: String,
+    path: String,
+    term: String,
+    height: u32,
+    width: u32,
+    #[builder(setter(skip))]
     timestamp: i64,
-    uniq_id: String,
+    #[builder(setter(skip))]
+    file: Option<File>,
 }
-
+impl RecorderBuilder {
+    pub fn build(&mut self) -> Result<Recorder> {
+        let mut s = self.private_build()?;
+        s.start()?;
+        Ok(s)
+    }
+}
 impl Recorder {
-    pub fn new(
-        uniq_id: &str,
-        root_path: &str,
-        term: &str,
-        height: u32,
-        width: u32,
-    ) -> Result<Self> {
-        let path = PathBuf::from(root_path)
+    pub fn start(&mut self) -> Result<&mut Self> {
+        let path = PathBuf::from(self.path.as_str())
             .join(SSH_KIND)
-            .join(uniq_id)
+            .join(self.uniq.as_str())
             .join(RECORDING_CAST);
-
-        let file = create_file(&path).context("Failed to create recording file")?;
-
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .context("System time before UNIX epoch")?
+            .context("system time before UNIX epoch")?
             .as_secs() as i64;
-
-        let header = Header {
-            title: String::new(),
-            version: 2,
-            height,
-            width,
-            env: Env {
-                shell: "/bin/bash".to_string(),
-                term: term.to_string(),
-            },
-            timestamp,
-        };
-
-        let mut recorder = Recorder {
-            file: Some(file),
-            timestamp,
-            uniq_id: uniq_id.to_string(),
-        };
-
-        recorder.write_header(&header)?;
-        Ok(recorder)
+        self.timestamp = timestamp;
+        self.file = Some(Self::create_file(&path).context("failed to create recording file")?);
+        // 添加头数据
+        let header = HeaderBuilder::default()
+            .version(2)
+            .height(self.height)
+            .width(self.width)
+            .env(Env::new(DEFAULT_SHELL, self.term.as_str()))
+            .timestamp(timestamp)
+            .build()?;
+        self.write_header(&header)?;
+        Ok(self)
     }
-
     fn write_header(&mut self, header: &Header) -> Result<()> {
         let json = serde_json::to_vec(header)?;
         if let Some(file) = &mut self.file {
@@ -84,7 +97,7 @@ impl Recorder {
         Ok(())
     }
 
-    fn write_data(&mut self, data: &str) -> Result<()> {
+    pub fn write_data(&mut self, data: &str) -> Result<()> {
         let now_nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as i64;
         let delta = (now_nanos - self.timestamp * 1_000_000_000) as f64 / 1_000_000_000.0;
 
@@ -111,14 +124,36 @@ impl Recorder {
             self.file = None;
         }
     }
+    fn create_file(path: &Path) -> Result<File> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| io::Error::other("Invalid path"))?;
+
+        if parent.exists() {
+            return Err(
+                io::Error::new(io::ErrorKind::AlreadyExists, "Directory already exists").into(),
+            );
+        }
+        std::fs::create_dir_all(parent)?;
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(Into::into)
+    }
+}
+impl Drop for Recorder {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
-impl io::Write for Recorder {
+impl Write for Recorder {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let data_str = String::from_utf8(buf.to_vec())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        if data_str.len() > self.uniq_id.len() && data_str.starts_with(&self.uniq_id) {
+        if data_str.len() > self.uniq.len() && data_str.starts_with(&self.uniq) {
             return Ok(buf.len());
         }
 
@@ -132,40 +167,22 @@ impl io::Write for Recorder {
     }
 }
 
-fn create_file(path: &Path) -> Result<File> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("Invalid path"))?;
-
-    if parent.exists() {
-        return Err(
-            io::Error::new(io::ErrorKind::AlreadyExists, "Directory already exists").into(),
-        );
-    }
-
-    std::fs::create_dir_all(parent)?;
-
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(Into::into)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
-    fn basic_functionality() -> Result<()> {
-        let mut recorder = Recorder::new("test_id", "./", "xterm-256color", 80, 24)?;
-
-        // Test writing data
+    fn test_recording_create() {
+        let mut recorder = RecorderBuilder::default()
+            .uniq("123")
+            .path("/tmp/rust")
+            .term("xterm-256color")
+            .height(80u32)
+            .width(24u32)
+            .build()
+            .unwrap();
         let data = "test data";
-        Write::write_all(&mut recorder, data.as_bytes())?;
-
+        recorder.write_data(data).unwrap();
         recorder.close();
-        Ok(())
     }
 }

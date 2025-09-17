@@ -1,12 +1,14 @@
 //! process
 
 mod common;
+mod error;
 pub mod guacamole;
 mod instruct;
 mod pipe;
 mod process;
 mod recording;
 mod ssh;
+mod sshm;
 mod types;
 
 pub use instruct::*;
@@ -69,7 +71,7 @@ mod tests {
         parser.process(TEST_DATA4);
         let c4 = parser.screen().contents();
         println!("all4 content:\n{c4}\n");
-        parser.set_size(24, 10);
+        parser.screen_mut().set_size(24, 10);
         parser.process(TEST_DATA5);
 
         println!("all5 content:\n{}\n", parser.screen().contents());
