@@ -61,12 +61,48 @@ pub struct Recorder {
 impl RecorderBuilder {
     pub fn build(&mut self) -> Result<Recorder> {
         let mut s = self.private_build()?;
-        s.start()?;
+        s.init()?;
         Ok(s)
     }
 }
 impl Recorder {
-    pub fn start(&mut self) -> Result<&mut Self> {
+    pub fn start_spawn(mut self, ctx: CancellationToken, mut receiver: UnboundedReceiver<Bytes>) {
+        tokio::spawn(async move {
+            loop {
+                select! {
+                    _ = ctx.cancelled() => {
+                           debug!(session_id=%self.uniq,"do_recording receive abort signal");
+                           break ;
+                        },
+                    _ = tokio::time::sleep(Duration::from_secs(3)) => {
+                        match self.flush() {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!(session_id=%self.uniq,"do_recording flush error: {:?}",e);
+                                    break;
+                                }
+                        }
+                    },
+                    rb = receiver.recv() => match rb {
+                        None  => {
+                            break;
+                        },
+                        Some(bytes)=> {
+                            match self.write_all(bytes.as_ref()) {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    error!(session_id=%self.uniq,"do_recording write error: {:?}",e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            self.close();
+        });
+    }
+    fn init(&mut self) -> Result<&mut Self> {
         let path = PathBuf::from(self.path.as_str())
             .join(SSH_KIND)
             .join(self.uniq.as_str())
@@ -170,19 +206,32 @@ impl Write for Recorder {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_recording_create() {
-        let mut recorder = RecorderBuilder::default()
-            .uniq("123")
+    use uuid::Uuid;
+    #[tokio::test]
+    async fn test_recording_create() {
+        let recorder = RecorderBuilder::default()
+            .uniq(Uuid::new_v4())
             .path("/tmp/rust")
             .term("xterm-256color")
             .height(80u32)
             .width(24u32)
             .build()
             .unwrap();
-        let data = "test data";
-        recorder.write_data(data).unwrap();
-        recorder.close();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut x = 10;
+            while x > 0 {
+                x -= 1;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                sender.send(Bytes::from(format!("now is {x}"))).unwrap();
+            }
+        });
+        let ctx = CancellationToken::new();
+        recorder.start_spawn(ctx.clone(), receiver);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        println!("start cancelled");
+        ctx.cancel();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        println!("stop recording");
     }
 }

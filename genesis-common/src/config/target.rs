@@ -1,6 +1,8 @@
 use super::defaults::*;
+use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Builder, Clone)]
+#[builder(setter(into))]
 pub struct TargetSSHOptions {
     pub host: String,
     #[serde(default = "_default_ssh_port")]
@@ -8,6 +10,7 @@ pub struct TargetSSHOptions {
     #[serde(default = "_default_username")]
     pub username: String,
     #[serde(default)]
+    #[builder(default)]
     pub allow_insecure_algos: Option<bool>,
     #[serde(default)]
     pub auth: SSHTargetAuth,

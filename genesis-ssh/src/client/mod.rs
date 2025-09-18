@@ -602,6 +602,13 @@ impl Drop for RemoteClient {
     }
 }
 
+/// # 远程连接SSH
+/// ## 入参
+/// - ctx: 当连接失败时,调用其cancel方法
+/// ## 返回参数
+/// - EventHub<Bytes>为ssh返回数据,可自行订阅操作
+/// - UnboundedSender<Bytes> 为可发送到ssh服务端
+/// - UnboundedSender<ServerExtraEnum> 为自行添加ssh事件,比如断开连接等
 pub async fn start_ssh_connect_with_state(
     uuid: Uuid,
     option: TargetSSHOptions,

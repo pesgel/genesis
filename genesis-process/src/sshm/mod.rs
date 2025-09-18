@@ -1,1 +1,2 @@
-mod process;
+mod channel;
+mod pipe;
